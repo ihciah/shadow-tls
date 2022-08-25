@@ -1,0 +1,19 @@
+version: '2.4'
+services:
+  shadow-tls:
+    image: ghcr.io/ihciah/shadow-tls:latest
+    container_name: shadow-tls
+    restart: always
+    network_mode: "host"
+    environment:
+      - MODE=
+      - LISTEN=
+      - SERVER=
+      - TLS=
+
+# Mode: client or server
+# LISTEN: local listen address with port
+# SERVER: remote address with port
+# TLS: server name in sni for client mode(like xxx.com.cn)
+#      server address with port for server mode(like xxx.com.cn:443)
+# THREADS(optional): set threads number

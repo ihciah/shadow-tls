@@ -1,0 +1,21 @@
+[package]
+authors = ["ihciah <ihciah@gmail.com>"]
+edition = "2021"
+license = "MIT/Apache-2.0"
+name = "shadow-tls"
+version = "0.1.0"
+
+[dependencies]
+monoio = "0.0.7"
+monoio-rustls = {git = "https://github.com/monoio-rs/monoio-tls", branch = "master"}
+
+anyhow = "1"
+clap = {version = "3", features = ["derive"]}
+rustls = {version = "0.20", default-features = false}
+tracing = "0.1"
+tracing-subscriber = "0.3"
+webpki-roots = "0.22"
+
+[features]
+# Relay data with splice syscall for linux(unfinished yet).
+splice = []
