@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use monoio::net::TcpListener;
 use protocol::{ShadowTlsClient, ShadowTlsServer};
-use tracing::{info, Level};
+use tracing::{error, info, Level};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -89,22 +89,34 @@ async fn run_client(listen: String, server_addr: String, tls_name: String) -> Re
     info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}");
     let shadow_client = Rc::new(ShadowTlsClient::new(&tls_name, server_addr)?);
     let listener = TcpListener::bind(&listen)?;
-    while let Ok((conn, addr)) = listener.accept().await {
-        info!("Accepted a connection from {addr}");
-        let client = shadow_client.clone();
-        monoio::spawn(async move { client.process(conn, addr).await });
+    loop {
+        match listener.accept().await {
+            Ok((conn, addr)) => {
+                info!("Accepted a connection from {addr}");
+                let client = shadow_client.clone();
+                monoio::spawn(async move { client.process(conn, addr).await });
+            }
+            Err(e) => {
+                error!("Accept failed: {e}");
+            }
+        }
     }
-    Ok(())
 }
 
 async fn run_server(listen: String, server_addr: String, tls_addr: String) -> Result<()> {
     info!("Server is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server address: {tls_addr}");
     let shadow_server = Rc::new(ShadowTlsServer::new(tls_addr, server_addr));
     let listener = TcpListener::bind(&listen)?;
-    while let Ok((conn, addr)) = listener.accept().await {
-        info!("Accepted a connection from {addr}");
-        let server = shadow_server.clone();
-        monoio::spawn(async move { server.process(conn, addr).await });
+    loop {
+        match listener.accept().await {
+            Ok((conn, addr)) => {
+                info!("Accepted a connection from {addr}");
+                let server = shadow_server.clone();
+                monoio::spawn(async move { server.process(conn, addr).await });
+            }
+            Err(e) => {
+                error!("Accept failed: {e}");
+            }
+        }
     }
-    Ok(())
 }
