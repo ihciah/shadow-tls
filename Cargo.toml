@@ -15,6 +15,7 @@ rustls = {version = "0.20", default-features = false}
 tracing = "0.1"
 tracing-subscriber = "0.3"
 webpki-roots = "0.22"
+pin-project-lite = "0.2"
 
 [features]
 # Relay data with splice syscall for linux(unfinished yet).

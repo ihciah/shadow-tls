@@ -1,9 +1,15 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use anyhow::Result;
 use monoio::{
     buf::IoBufMut,
-    io::{AsyncReadRentExt, AsyncWriteRentExt},
+    io::{AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt},
     net::{
         tcp::{TcpReadHalf, TcpWriteHalf},
         TcpStream,
@@ -98,6 +104,7 @@ impl<RA, RB> ShadowTlsServer<RA, RB> {
         RB: std::net::ToSocketAddrs,
     {
         Self::relay(&mut in_stream, &self.tls_remote, true).await?;
+        info!("Handshake for {addr} finished");
         Self::relay(&mut in_stream, &self.real_remote, false).await?;
         info!("Relay for {addr} finished");
         Ok(())
@@ -113,17 +120,15 @@ impl<RA, RB> ShadowTlsServer<RA, RB> {
         let (in_r, in_w) = in_stream.split();
         match handshake {
             true => {
-                let (a, b) = monoio::join!(
+                TaskPair::new(
                     copy_until_handshake_finished(out_r, in_w),
                     copy_until_handshake_finished(in_r, out_w),
-                );
-                let (_, _) = (a?, b?);
+                )
+                .await?;
             }
 
             false => {
-                let (a, b) =
-                    monoio::join!(copy_until_eof(out_r, in_w), copy_until_eof(in_r, out_w),);
-                let (_, _) = (a?, b?);
+                TaskPair::new(copy_until_eof(out_r, in_w), copy_until_eof(in_r, out_w)).await?;
             }
         };
         Ok(())
@@ -136,7 +141,6 @@ async fn copy_until_handshake_finished<'a>(
 ) -> Result<()> {
     const HANDSHAKE: u8 = 0x16;
     const CHANGE_CIPHER_SPEC: u8 = 0x14;
-
     // header_buf is used to read handshake frame header, will be a fixed size buffer.
     let mut header_buf = Some(vec![0_u8; 5]);
     // data_buf is used to read and write data, and can be expanded.
@@ -191,6 +195,69 @@ async fn copy_until_eof<'a>(
     mut read_half: TcpReadHalf<'a>,
     mut write_half: TcpWriteHalf<'a>,
 ) -> Result<()> {
-    monoio::io::copy(&mut read_half, &mut write_half).await?;
+    let copy_result = monoio::io::copy(&mut read_half, &mut write_half).await;
+    write_half.shutdown().await?;
+    copy_result?;
     Ok(())
+}
+
+pin_project_lite::pin_project! {
+    struct TaskPair<FA, FB, A, B> {
+        #[pin]
+        future_a: FA,
+        #[pin]
+        future_b: FB,
+        slot_a: Option<A>,
+        slot_b: Option<B>
+    }
+}
+
+impl<FA, FB, A, B> TaskPair<FA, FB, A, B>
+where
+    FA: Future<Output = Result<A>>,
+    FB: Future<Output = Result<B>>,
+{
+    fn new(future_a: FA, future_b: FB) -> Self {
+        Self {
+            future_a,
+            future_b,
+            slot_a: None,
+            slot_b: None,
+        }
+    }
+}
+
+impl<FA, FB, A, B> Future for TaskPair<FA, FB, A, B>
+where
+    FA: Future<Output = Result<A>>,
+    FB: Future<Output = Result<B>>,
+{
+    type Output = Result<(A, B)>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        if this.slot_a.is_none() {
+            if let Poll::Ready(r) = this.future_a.poll(cx) {
+                match r {
+                    Ok(a) => *this.slot_a = Some(a),
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+        }
+        if this.slot_b.is_none() {
+            if let Poll::Ready(r) = this.future_b.poll(cx) {
+                match r {
+                    Ok(b) => *this.slot_b = Some(b),
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+        }
+        if this.slot_a.is_some() && this.slot_b.is_some() {
+            return Poll::Ready(Ok((
+                this.slot_a.take().unwrap(),
+                this.slot_b.take().unwrap(),
+            )));
+        }
+        Poll::Pending
+    }
 }

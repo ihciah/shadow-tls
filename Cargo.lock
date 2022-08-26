@@ -374,6 +374,7 @@ dependencies = [
  "clap",
  "monoio",
  "monoio-rustls",
+ "pin-project-lite",
  "rustls",
  "tracing",
  "tracing-subscriber",
