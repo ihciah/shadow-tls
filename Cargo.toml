@@ -20,3 +20,7 @@ pin-project-lite = "0.2"
 [features]
 # Relay data with splice syscall for linux(unfinished yet).
 splice = []
+
+[profile.release]
+lto = true
+opt-level = 3
