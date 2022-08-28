@@ -191,11 +191,23 @@ async fn copy_until_handshake_finished<'a>(
     Ok(())
 }
 
+#[cfg(not(feature = "zero-copy"))]
 async fn copy_until_eof<'a>(
     mut read_half: TcpReadHalf<'a>,
     mut write_half: TcpWriteHalf<'a>,
 ) -> Result<()> {
     let copy_result = monoio::io::copy(&mut read_half, &mut write_half).await;
+    write_half.shutdown().await?;
+    copy_result?;
+    Ok(())
+}
+
+#[cfg(feature = "zero-copy")]
+async fn copy_until_eof<'a>(
+    mut read_half: TcpReadHalf<'a>,
+    mut write_half: TcpWriteHalf<'a>,
+) -> Result<()> {
+    let copy_result = monoio::io::tcp_zero_copy(&mut read_half, &mut write_half).await;
     write_half.shutdown().await?;
     copy_result?;
     Ok(())
