@@ -28,4 +28,5 @@ lto = true
 opt-level = 3
 
 [patch.crates-io]
-monoio = {git = "https://github.com/ihciah/monoio", branch = "zero-copy"}
+# Once zero copy merged, remove the patch.
+monoio = {git = "https://github.com/ihciah/monoio", branch = "zero-copy-for-shadow-tls"}
