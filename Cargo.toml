@@ -6,8 +6,8 @@ name = "shadow-tls"
 version = "0.1.0"
 
 [dependencies]
-monoio = {version = "0.0.7"}
-monoio-rustls = {git = "https://github.com/monoio-rs/monoio-tls", branch = "master"}
+monoio = {version = "0.0.8"}
+monoio-rustls = {version = "0.0.5"}
 
 anyhow = "1"
 clap = {version = "3", features = ["derive"]}
@@ -26,7 +26,3 @@ zero-copy = ["monoio/splice"]
 [profile.release]
 lto = true
 opt-level = 3
-
-[patch.crates-io]
-# Once zero copy merged, remove the patch.
-monoio = {git = "https://github.com/ihciah/monoio", branch = "zero-copy-for-shadow-tls"}

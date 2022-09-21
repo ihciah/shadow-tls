@@ -9,7 +9,7 @@ use std::{
 use anyhow::Result;
 use monoio::{
     buf::IoBufMut,
-    io::{AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt},
+    io::{AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
     net::{
         tcp::{TcpReadHalf, TcpWriteHalf},
         TcpStream,
@@ -196,7 +196,7 @@ async fn copy_until_eof<'a>(
     mut write_half: TcpWriteHalf<'a>,
 ) -> Result<()> {
     #[cfg(all(feature = "zero-copy", target_os = "linux"))]
-    let copy_result = monoio::io::tcp_zero_copy(&mut read_half, &mut write_half).await;
+    let copy_result = monoio::io::zero_copy(&mut read_half, &mut write_half).await;
     #[cfg(not(all(feature = "zero-copy", target_os = "linux")))]
     let copy_result = monoio::io::copy(&mut read_half, &mut write_half).await;
     write_half.shutdown().await?;
