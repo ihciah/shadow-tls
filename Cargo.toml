@@ -7,7 +7,7 @@ version = "0.1.0"
 
 [dependencies]
 monoio = {version = "0.0.8"}
-monoio-rustls = {version = "0.0.5"}
+monoio-rustls = {version = "0.0.6"}
 
 anyhow = "1"
 clap = {version = "3", features = ["derive"]}
