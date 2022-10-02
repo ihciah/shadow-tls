@@ -10,10 +10,12 @@ services:
       - LISTEN=
       - SERVER=
       - TLS=
+      - PASSWORD=
 
 # Mode: client or server
 # LISTEN: local listen address with port
 # SERVER: remote address with port
 # TLS: server name in sni for client mode(like xxx.com.cn)
 #      server address with port for server mode(like xxx.com.cn:443)
+# PASSWORD: shadow-tls password
 # THREADS(optional): set threads number
