@@ -46,7 +46,7 @@ where
         let (mut in_r, mut in_w) = in_stream.split();
         let (switch, _) = FirstRetGroup::new(
             copy_until_handshake_finished(&mut in_r, &mut out_w, hmac),
-            monoio::io::copy(&mut out_r, &mut in_w),
+            copy_until_eof(&mut out_r, &mut in_w),
         )
         .await?;
         tracing::debug!("handshake finished, switch: {switch:?}");

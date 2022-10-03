@@ -129,13 +129,13 @@ where
     }
 }
 
-pub async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> anyhow::Result<()>
+pub async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
 where
     R: monoio::io::AsyncReadRent,
     W: monoio::io::AsyncWriteRent,
 {
     let copy_result = monoio::io::copy(&mut read_half, &mut write_half).await;
-    write_half.shutdown().await?;
+    let _ = write_half.shutdown().await;
     copy_result?;
     Ok(())
 }
@@ -218,6 +218,7 @@ where
         tracing::debug!("reset buf slice with {} bytes prefix", HEADER_SIZE);
         buf = buf_.slice_mut(HEADER_SIZE..);
     }
+    let _ = writer.shutdown().await;
     Ok(transfered)
 }
 
@@ -308,6 +309,7 @@ where
             raw_buf = buf_.into_inner();
         }
     }
+    let _ = writer.shutdown().await;
     Ok(transfered)
 }
 
