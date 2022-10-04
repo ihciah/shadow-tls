@@ -11,7 +11,8 @@ use std::{rc::Rc, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use monoio::net::TcpListener;
-use tracing::{error, info, Level};
+use tracing::{error, info};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::set_tcp_keepalive};
 
@@ -68,7 +69,10 @@ enum Commands {
 }
 
 fn main() {
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
     let args = Arc::new(Args::parse());
     let mut threads = Vec::new();
     let parallelism = get_parallelism(&args);
