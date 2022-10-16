@@ -1,7 +1,7 @@
 use std::net::ToSocketAddrs;
 
 use monoio::{
-    buf::{IoBuf, IoBufMut, Slice},
+    buf::{IoBuf, IoBufMut, Slice, SliceMut},
     io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
     net::TcpStream,
 };
@@ -105,15 +105,50 @@ where
     const HMAC_SIZE: usize = 8;
     const HANDSHAKE: u8 = 0x16;
     const CHANGE_CIPHER_SPEC: u8 = 0x14;
+    const HEADER_BUF_SIZE: usize = 5;
+    const TLS_MAJOR: u8 = 0x03;
+    const TLS_MINOR: (u8, u8) = (0x03, 0x01);
+    // We maintain 2 status to make sure current session is in an tls session.
+    // This is essential for preventing active detection.
+    let mut has_seen_change_cipher_spec = false;
+    let mut has_seen_handshake = false;
+
     // header_buf is used to read handshake frame header, will be a fixed size buffer.
-    let mut header_buf = vec![0_u8; 5].into_boxed_slice();
+    let mut header_buf = vec![0_u8; HEADER_BUF_SIZE].into_boxed_slice();
+    let mut header_read_len = 0;
+    let mut header_write_len = 0;
     // data_buf is used to read and write data, and can be expanded.
     let mut data_buf = vec![0_u8; 2048];
     let mut application_data_count: usize = 0;
     loop {
-        let (res, header_buf_) = read_half.read_exact(header_buf).await;
-        header_buf = header_buf_;
-        res?;
+        let header_buf_slice = SliceMut::new(header_buf, header_read_len, HEADER_BUF_SIZE);
+        let (res, header_buf_slice_) = read_half.read(header_buf_slice).await;
+        header_buf = header_buf_slice_.into_inner();
+        let read_len = res?;
+        header_read_len += read_len;
+
+        // if EOF, close write half.
+        if read_len == 0 {
+            let _ = write_half.shutdown().await;
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+
+        // We have to relay data now no matter header is enough or not.
+        let header_buf_slice_w = Slice::new(header_buf, header_write_len, header_read_len);
+        let (res, header_buf_slice_w_) = write_half.write_all(header_buf_slice_w).await;
+        header_buf = header_buf_slice_w_.into_inner();
+        header_write_len += res?;
+
+        if header_read_len != HEADER_BUF_SIZE {
+            // Here we have not got enough data to parse header.
+            // continue to read.
+            continue;
+        }
+
+        // Now header has been read and redirected successfully.
+        // We should clear header status.
+        header_read_len = 0;
+        header_write_len = 0;
 
         // parse length
         let mut size: [u8; 2] = Default::default();
@@ -125,7 +160,47 @@ where
             data_size
         );
 
-        // read data
+        // Check data type, if not app data we want, we can forward it directly(in streaming way).
+        if header_buf[0] != APPLICATION_DATA || !has_seen_handshake || !has_seen_change_cipher_spec
+        {
+            // The first packet must be handshake.
+            // Also, every packet's version must be valid.
+            let valid = (has_seen_handshake || header_buf[0] == HANDSHAKE)
+                && header_buf[1] == TLS_MAJOR
+                && (header_buf[2] == TLS_MINOR.0 || header_buf[2] == TLS_MINOR.1);
+            if header_buf[0] == CHANGE_CIPHER_SPEC {
+                has_seen_change_cipher_spec = true;
+            }
+            if header_buf[0] == HANDSHAKE {
+                has_seen_handshake = true;
+            }
+            // copy data
+            let mut to_copy = data_size as usize;
+            while to_copy != 0 {
+                let max_read = data_buf.capacity().min(to_copy);
+                let buf = SliceMut::new(data_buf, 0, max_read);
+                let (read_res, buf) = read_half.read(buf).await;
+
+                // if EOF, close write half.
+                let read_len = read_res?;
+                if read_len == 0 {
+                    let _ = write_half.shutdown().await;
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
+
+                let buf = buf.into_inner().slice(0..read_len);
+                let (write_res, buf) = write_half.write_all(buf).await;
+                to_copy -= write_res?;
+                data_buf = buf.into_inner();
+            }
+            if !valid {
+                return Ok(SwitchResult::DirectProxy);
+            }
+            continue;
+        }
+
+        // Read exact data because we make sure we are in a tls session,
+        // and we will behave like a tls server.
         if data_size as usize > data_buf.len() {
             data_buf.reserve(data_size as usize - data_buf.len());
         }
@@ -136,15 +211,13 @@ where
         tracing::debug!("read data length {}", data_size);
 
         let mut switch = false;
-        if header_buf[0] == APPLICATION_DATA {
-            application_data_count += 1;
-            if data_buf.len() >= HMAC_SIZE {
-                let hash = hmac.hash();
-                tracing::debug!("hmac calculated: {hash:?}");
-                if data_buf[0..HMAC_SIZE] == hash[0..HMAC_SIZE] {
-                    tracing::debug!("hmac matches");
-                    switch = true;
-                }
+        application_data_count += 1;
+        if data_buf.len() >= HMAC_SIZE {
+            let hash = hmac.hash();
+            tracing::debug!("hmac calculated: {hash:?}");
+            if data_buf[0..HMAC_SIZE] == hash[0..HMAC_SIZE] {
+                tracing::debug!("hmac matches");
+                switch = true;
             }
         }
 
@@ -152,15 +225,11 @@ where
             // we will write data to our real server
             let pure_data = data_buf.slice(HMAC_SIZE..);
             return Ok(SwitchResult::Switch(pure_data));
+        } else {
+            let (write_result, buf) = write_half.write_all(data_buf).await;
+            write_result?;
+            data_buf = buf;
         }
-
-        // copy header and data
-        let (write_result, buf) = write_half.write_all(header_buf).await;
-        write_result?;
-        header_buf = buf;
-        let (write_result, buf) = write_half.write_all(data_buf).await;
-        write_result?;
-        data_buf = buf;
 
         if application_data_count > 3 {
             tracing::debug!("hmac not matches after 3 times, fallback to direct");
