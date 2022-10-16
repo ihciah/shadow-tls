@@ -84,10 +84,18 @@ pin_project_lite::pin_project! {
         #[pin]
         future_a: FA,
         #[pin]
-        future_b: FB,
+        future_b: Option<FB>,
         slot_b: Option<B>,
         marker: PhantomData<E>,
     }
+}
+
+pub enum FutureOrOutput<F, R, E>
+where
+    F: Future<Output = Result<R, E>>,
+{
+    Future(F),
+    Output(R),
 }
 
 impl<FA, FB, A, B, E> FirstRetGroup<FA, FB, B, E>
@@ -98,7 +106,7 @@ where
     pub fn new(future_a: FA, future_b: FB) -> Self {
         Self {
             future_a,
-            future_b,
+            future_b: Some(future_b),
             slot_b: None,
             marker: Default::default(),
         }
@@ -108,17 +116,22 @@ where
 impl<FA, FB, A, B, E> Future for FirstRetGroup<FA, FB, B, E>
 where
     FA: Future<Output = Result<A, E>>,
-    FB: Future<Output = Result<B, E>>,
+    FB: Future<Output = Result<B, E>> + Unpin,
 {
-    type Output = Result<(A, Option<B>), E>;
+    type Output = Result<(A, FutureOrOutput<FB, B, E>), E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         if let Poll::Ready(r) = this.future_a.poll(cx) {
-            return Poll::Ready(r.map(|r| (r, this.slot_b.take())));
+            let b = if let Some(output) = this.slot_b.take() {
+                FutureOrOutput::Output(output)
+            } else {
+                FutureOrOutput::Future(this.future_b.get_mut().take().unwrap())
+            };
+            return Poll::Ready(r.map(|r| (r, b)));
         }
         if this.slot_b.is_none() {
-            if let Poll::Ready(r) = this.future_b.poll(cx) {
+            if let Poll::Ready(r) = this.future_b.as_pin_mut().unwrap().poll(cx) {
                 match r {
                     Ok(r) => *this.slot_b = Some(r),
                     Err(e) => return Poll::Ready(Err(e)),

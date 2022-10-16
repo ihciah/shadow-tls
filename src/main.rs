@@ -17,7 +17,12 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::set_tcp_keepalive};
 
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(
+    author,
+    version,
+    about,
+    long_about = "A proxy to expose real tls handshake to the firewall.\nGithub: github.com/ihciah/shadow-tls"
+)]
 struct Args {
     #[clap(subcommand)]
     cmd: Commands,

@@ -55,7 +55,7 @@ impl<S> HashedStream for HashedReadStream<S> {
 
 pub struct HashedWriteStream<S> {
     raw: S,
-    hmac: Rc<RefCell<hmac::Hmac<sha1::Sha1>>>,
+    hmac: Rc<RefCell<(bool, hmac::Hmac<sha1::Sha1>)>>,
 }
 
 // # Safety
@@ -78,7 +78,7 @@ impl<S> HashedWriteStream<S> {
     pub fn new(raw: S, password: &[u8]) -> Result<Self, hmac::digest::InvalidLength> {
         Ok(Self {
             raw,
-            hmac: Rc::new(RefCell::new(hmac::Hmac::new_from_slice(password)?)),
+            hmac: Rc::new(RefCell::new((true, hmac::Hmac::new_from_slice(password)?))),
         })
     }
 
@@ -90,6 +90,7 @@ impl<S> HashedWriteStream<S> {
         self.hmac
             .borrow()
             .clone()
+            .1
             .finalize()
             .into_bytes()
             .as_slice()
@@ -102,18 +103,23 @@ impl<S> HashedWriteStream<S> {
     }
 }
 
-pub struct HmacHandler(Rc<RefCell<hmac::Hmac<sha1::Sha1>>>);
+pub struct HmacHandler(Rc<RefCell<(bool, hmac::Hmac<sha1::Sha1>)>>);
 
 impl HmacHandler {
     pub fn hash(&self) -> [u8; 20] {
         self.0
             .borrow()
             .clone()
+            .1
             .finalize()
             .into_bytes()
             .as_slice()
             .try_into()
             .expect("unexpected digest length")
+    }
+
+    pub fn disable(&mut self) {
+        self.0.borrow_mut().0 = false;
     }
 }
 
@@ -218,10 +224,11 @@ impl<S: AsyncWriteRent> AsyncWriteRent for HashedWriteStream<S> {
             let ptr = buf.read_ptr();
             let (result, buf) = self.raw.write(buf).await;
             if let Ok(n) = result {
-                // Safety: we can make sure the ptr and n are valid.
-                self.hmac
-                    .borrow_mut()
-                    .update(unsafe { std::slice::from_raw_parts(ptr, n) });
+                let mut eh = self.hmac.borrow_mut();
+                if eh.0 {
+                    // Safety: we can make sure the ptr and n are valid.
+                    eh.1.update(unsafe { std::slice::from_raw_parts(ptr, n) });
+                }
             }
             (result, buf)
         }
