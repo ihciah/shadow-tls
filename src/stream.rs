@@ -130,9 +130,9 @@ impl<S> HashedStream for HashedWriteStream<S> {
 }
 
 impl<S: AsyncReadRent> AsyncReadRent for HashedReadStream<S> {
-    type ReadFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> where
+    type ReadFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
         B: monoio::buf::IoBufMut + 'a, S: 'a;
-    type ReadvFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> where
+    type ReadvFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
         B: monoio::buf::IoVecBufMut + 'a, S: 'a;
 
     fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> Self::ReadFuture<'_, T> {
@@ -194,9 +194,9 @@ impl<S: AsyncWriteRent> AsyncWriteRent for HashedReadStream<S> {
 }
 
 impl<S: AsyncReadRent> AsyncReadRent for HashedWriteStream<S> {
-    type ReadFuture<'a, T> = S::ReadFuture<'a, T> where
+    type ReadFuture<'a, T> = <S as AsyncReadRent>::ReadFuture<'a, T> where
         T: monoio::buf::IoBufMut + 'a, Self: 'a;
-    type ReadvFuture<'a, T> = S::ReadvFuture<'a, T> where
+    type ReadvFuture<'a, T> = <S as AsyncReadRent>::ReadvFuture<'a, T> where
         T: monoio::buf::IoVecBufMut + 'a, Self: 'a;
 
     fn read<T: monoio::buf::IoBufMut>(&mut self, buf: T) -> Self::ReadFuture<'_, T> {
@@ -209,10 +209,10 @@ impl<S: AsyncReadRent> AsyncReadRent for HashedWriteStream<S> {
 }
 
 impl<S: AsyncWriteRent> AsyncWriteRent for HashedWriteStream<S> {
-    type WriteFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> where
+    type WriteFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> +'a where
         T: monoio::buf::IoBuf + 'a, S: 'a;
 
-    type WritevFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> where
+    type WritevFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> +'a where
         T: monoio::buf::IoVecBuf + 'a, S: 'a;
 
     type FlushFuture<'a> = S::FlushFuture<'a> where Self: 'a;

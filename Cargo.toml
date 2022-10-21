@@ -10,8 +10,8 @@ repository = "https://github.com/ihciah/shadow-tls"
 version = "0.2.3"
 
 [dependencies]
-monoio = {version = "0.0.8"}
-monoio-rustls = {version = "0.0.6"}
+monoio = {version = "0.0.9"}
+monoio-rustls = {version = "0.0.7"}
 
 anyhow = "1"
 clap = {version = "3", features = ["derive"]}
