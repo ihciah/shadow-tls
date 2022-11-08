@@ -1,4 +1,6 @@
 # Shadow TLS
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_shield)
+
 一个**可以使用别人的受信证书**的 TLS 伪装代理。
 
 它和 [trojan](https://github.com/trojan-gfw/trojan) 的表现类似，但它在做真实 TLS 握手的同时，可以直接使用别人的受信证书（如某些大公司或机构的域名），而不需要自己签发证书。当直接使用浏览器打开时，可以正常显示对应可信域名的网页内容。
@@ -47,3 +49,6 @@ However, if this project is used widely, we will support it by conditional compi
 Also, you may need to [modify some system limitations](https://github.com/bytedance/monoio/blob/master/docs/en/memlock.md) to make it work. If it does not work, you can add environ `MONOIO_FORCE_LEGACY_DRIVER=1` to use epoll instead of io_uring.
 
 你可能需要修改某些系统设置来让它工作，[参考这里](https://github.com/bytedance/monoio/blob/master/docs/en/memlock.md)。如果它不起作用，您可以添加环境变量 `MONOIO_FORCE_LEGACY_DRIVER=1` 以使用 epoll 而不是 io_uring。
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_large)
