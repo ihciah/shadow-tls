@@ -14,13 +14,13 @@ monoio = {version = "0.0.9"}
 monoio-rustls = {version = "0.0.7"}
 
 anyhow = "1"
-clap = {version = "3", features = ["derive"]}
+clap = {version = "4", features = ["derive"]}
 hmac = "0.12"
 pin-project-lite = "0.2"
 rustls = {version = "0.20", default-features = false}
 sha1 = "0.10"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 webpki-roots = "0.22"
 
 [profile.release]
