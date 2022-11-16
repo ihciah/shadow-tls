@@ -70,6 +70,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
                 server_addr: format!("{ss_remote_host}:{ss_remote_port}"),
                 tls_name: host.to_owned(),
                 password: passwd.to_owned(),
+                alpn: Default::default(),
             },
             opts: args_opts,
         }
