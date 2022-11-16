@@ -49,6 +49,11 @@ enum Commands {
         tls_name: String,
         #[clap(long = "password", help = "Password")]
         password: String,
+        #[clap(
+            long = "alpn",
+            help = "Application-Layer Protocol Negotiation(like \"http/1.1\")"
+        )]
+        alpn: String,
     },
     #[clap(about = "Run server side")]
     Server {
@@ -118,12 +123,14 @@ async fn run(cli: Arc<Args>) {
             server_addr,
             tls_name,
             password,
+            alpn,
         } => {
             run_client(
                 listen.clone(),
                 server_addr.clone(),
                 tls_name.clone(),
                 password.clone(),
+                alpn.clone(),
             )
             .await
             .expect("client exited");
@@ -151,9 +158,15 @@ async fn run_client(
     server_addr: String,
     tls_name: String,
     password: String,
+    alpn: String,
 ) -> anyhow::Result<()> {
     info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}");
-    let shadow_client = Rc::new(ShadowTlsClient::new(&tls_name, server_addr, password)?);
+    let shadow_client = Rc::new(ShadowTlsClient::new(
+        &tls_name,
+        server_addr,
+        password,
+        alpn,
+    )?);
     let listener = TcpListener::bind(&listen)?;
     loop {
         match listener.accept().await {

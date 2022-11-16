@@ -19,7 +19,12 @@ pub struct ShadowTlsClient<A> {
 
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
-    pub fn new(server_name: &str, address: A, password: String) -> anyhow::Result<Self> {
+    pub fn new(
+        server_name: &str,
+        address: A,
+        password: String,
+        alpn: String,
+    ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
             OwnedTrustAnchor::from_subject_spki_name_constraints(
@@ -29,10 +34,13 @@ impl<A> ShadowTlsClient<A> {
             )
         }));
         // TLS 1.2 and TLS 1.3 is enabled.
-        let tls_config = rustls::ClientConfig::builder()
+        let mut tls_config = rustls::ClientConfig::builder()
             .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth();
+        // Set ALPN
+        tls_config.alpn_protocols = vec![alpn.as_bytes().to_vec()];
+
         let tls_connector = TlsConnector::from(tls_config);
         let server_name = ServerName::try_from(server_name)?;
         Ok(Self {
