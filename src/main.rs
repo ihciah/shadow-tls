@@ -51,6 +51,7 @@ enum Commands {
         password: String,
         #[clap(
             long = "alpn",
+            default_value = "",
             help = "Application-Layer Protocol Negotiation(like \"http/1.1\")"
         )]
         alpn: String,

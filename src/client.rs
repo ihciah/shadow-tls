@@ -39,7 +39,9 @@ impl<A> ShadowTlsClient<A> {
             .with_root_certificates(root_store)
             .with_no_client_auth();
         // Set ALPN
-        tls_config.alpn_protocols = vec![alpn.as_bytes().to_vec()];
+        if alpn.len() != 0 {
+            tls_config.alpn_protocols = vec![alpn.as_bytes().to_vec()];
+        }
 
         let tls_connector = TlsConnector::from(tls_config);
         let server_name = ServerName::try_from(server_name)?;
