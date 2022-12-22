@@ -14,7 +14,9 @@ use monoio::net::TcpListener;
 use tracing::{error, info};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::set_tcp_keepalive};
+use crate::{
+    client::ShadowTlsClient, client::TlsExtConfig, server::ShadowTlsServer, util::set_tcp_keepalive,
+};
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -166,7 +168,7 @@ async fn run_client(
         &tls_name,
         server_addr,
         password,
-        alpn,
+        TlsExtConfig::new(vec![alpn.into()]),
     )?);
     let listener = TcpListener::bind(&listen)?;
     loop {

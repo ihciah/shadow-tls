@@ -17,13 +17,23 @@ pub struct ShadowTlsClient<A> {
     password: String,
 }
 
+pub struct TlsExtConfig {
+    alpn: Vec<Vec<u8>>,
+}
+
+impl TlsExtConfig {
+    pub fn new(alpn: Vec<Vec<u8>>) -> TlsExtConfig {
+        TlsExtConfig { alpn }
+    }
+}
+
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
     pub fn new(
         server_name: &str,
         address: A,
         password: String,
-        alpn: String,
+        tls_ext_config: TlsExtConfig,
     ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -38,10 +48,9 @@ impl<A> ShadowTlsClient<A> {
             .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth();
-        // Set ALPN
-        if alpn.len() != 0 {
-            tls_config.alpn_protocols = vec![alpn.as_bytes().to_vec()];
-        }
+
+        // Set tls config
+        tls_config.alpn_protocols = tls_ext_config.alpn;
 
         let tls_connector = TlsConnector::from(tls_config);
         let server_name = ServerName::try_from(server_name)?;
