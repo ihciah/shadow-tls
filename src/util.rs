@@ -326,10 +326,13 @@ where
     Ok(transfered)
 }
 
-pub fn set_tcp_keepalive(conn: &mut TcpStream) {
-    let _ = conn.set_tcp_keepalive(
-        Some(Duration::from_secs(90)),
-        Some(Duration::from_secs(90)),
-        Some(2),
-    );
+pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
+    if keepalive {
+        let _ = conn.set_tcp_keepalive(
+            Some(Duration::from_secs(90)),
+            Some(Duration::from_secs(90)),
+            Some(2),
+        );
+    }
+    let _ = conn.set_nodelay(nodelay);
 }

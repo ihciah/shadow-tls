@@ -6,7 +6,8 @@ use rustls::{OwnedTrustAnchor, RootCertStore, ServerName};
 
 use crate::{
     stream::HashedReadStream,
-    util::{copy_with_application_data, copy_without_application_data, set_tcp_keepalive},
+    util::{copy_with_application_data, copy_without_application_data, mod_tcp_conn},
+    Opts,
 };
 
 /// ShadowTlsClient.
@@ -15,11 +16,17 @@ pub struct ShadowTlsClient<A> {
     server_name: ServerName,
     address: A,
     password: String,
+    opts: Opts,
 }
 
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
-    pub fn new(server_name: &str, address: A, password: String) -> anyhow::Result<Self> {
+    pub fn new(
+        server_name: &str,
+        address: A,
+        password: String,
+        opts: Opts,
+    ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
             OwnedTrustAnchor::from_subject_spki_name_constraints(
@@ -40,6 +47,7 @@ impl<A> ShadowTlsClient<A> {
             server_name,
             address,
             password,
+            opts,
         })
     }
 
@@ -72,7 +80,7 @@ impl<A> ShadowTlsClient<A> {
         A: std::net::ToSocketAddrs,
     {
         let mut stream = TcpStream::connect(&self.address).await?;
-        set_tcp_keepalive(&mut stream);
+        mod_tcp_conn(&mut stream, true, self.opts.nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
         let tls_stream = self

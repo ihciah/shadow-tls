@@ -2,20 +2,20 @@
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 
-mod arg;
 mod client;
 mod server;
+mod sip003;
 mod stream;
 mod util;
 
-use std::{rc::Rc, sync::Arc};
+use std::{fmt::Display, rc::Rc, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use monoio::net::TcpListener;
 use tracing::{error, info};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::set_tcp_keepalive};
+use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::mod_tcp_conn};
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -27,8 +27,30 @@ use crate::{client::ShadowTlsClient, server::ShadowTlsServer, util::set_tcp_keep
 struct Args {
     #[clap(subcommand)]
     cmd: Commands,
-    #[clap(short, long)]
+    #[clap(flatten)]
+    opts: Opts,
+}
+
+#[derive(Parser, Debug, Default, Clone)]
+pub struct Opts {
+    #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
+    #[clap(short, long, help = "Set TCP_NODELAY")]
+    nodelay: bool,
+}
+
+impl Display for Opts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.threads {
+            Some(t) => {
+                write!(f, "fixed {t} threads")
+            }
+            None => {
+                write!(f, "auto adjusted threads")
+            }
+        }?;
+        write!(f, "; nodelay: {}", self.nodelay)
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -74,6 +96,45 @@ enum Commands {
     },
 }
 
+impl Args {
+    async fn start(&self) {
+        match &self.cmd {
+            Commands::Client {
+                listen,
+                server_addr,
+                tls_name,
+                password,
+            } => {
+                run_client(
+                    listen.clone(),
+                    server_addr.clone(),
+                    tls_name.clone(),
+                    password.clone(),
+                    self.opts.clone(),
+                )
+                .await
+                .expect("client exited");
+            }
+            Commands::Server {
+                listen,
+                server_addr,
+                tls_addr,
+                password,
+            } => {
+                run_server(
+                    listen.clone(),
+                    server_addr.clone(),
+                    tls_addr.clone(),
+                    password.clone(),
+                    self.opts.clone(),
+                )
+                .await
+                .expect("server exited");
+            }
+        }
+    }
+}
+
 fn main() {
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -83,7 +144,7 @@ fn main() {
                 .from_env_lossy(),
         )
         .init();
-    let args = match arg::get_sip003_arg() {
+    let args = match sip003::get_sip003_arg() {
         Some(a) => Arc::new(a),
         None => Arc::new(Args::parse()),
     };
@@ -97,7 +158,7 @@ fn main() {
                 .enable_timer()
                 .build()
                 .expect("unable to build monoio runtime");
-            rt.block_on(run(args_clone));
+            rt.block_on(args_clone.start());
         });
         threads.push(t);
     }
@@ -107,7 +168,7 @@ fn main() {
 }
 
 fn get_parallelism(args: &Args) -> usize {
-    if let Some(n) = args.threads {
+    if let Some(n) = args.opts.threads {
         return n as usize;
     }
     std::thread::available_parallelism()
@@ -115,56 +176,28 @@ fn get_parallelism(args: &Args) -> usize {
         .unwrap_or(1)
 }
 
-async fn run(cli: Arc<Args>) {
-    match &cli.cmd {
-        Commands::Client {
-            listen,
-            server_addr,
-            tls_name,
-            password,
-        } => {
-            run_client(
-                listen.clone(),
-                server_addr.clone(),
-                tls_name.clone(),
-                password.clone(),
-            )
-            .await
-            .expect("client exited");
-        }
-        Commands::Server {
-            listen,
-            server_addr,
-            tls_addr,
-            password,
-        } => {
-            run_server(
-                listen.clone(),
-                server_addr.clone(),
-                tls_addr.clone(),
-                password.clone(),
-            )
-            .await
-            .expect("server exited");
-        }
-    }
-}
-
 async fn run_client(
     listen: String,
     server_addr: String,
     tls_name: String,
     password: String,
+    opts: Opts,
 ) -> anyhow::Result<()> {
-    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}");
-    let shadow_client = Rc::new(ShadowTlsClient::new(&tls_name, server_addr, password)?);
+    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}\nOpts: {opts}");
+    let nodelay = opts.nodelay;
+    let shadow_client = Rc::new(ShadowTlsClient::new(
+        &tls_name,
+        server_addr,
+        password,
+        opts,
+    )?);
     let listener = TcpListener::bind(&listen)?;
     loop {
         match listener.accept().await {
             Ok((mut conn, addr)) => {
                 info!("Accepted a connection from {addr}");
                 let client = shadow_client.clone();
-                set_tcp_keepalive(&mut conn);
+                mod_tcp_conn(&mut conn, true, nodelay);
                 monoio::spawn(async move { client.relay(conn, addr).await });
             }
             Err(e) => {
@@ -179,15 +212,17 @@ async fn run_server(
     server_addr: String,
     tls_addr: String,
     password: String,
+    opts: Opts,
 ) -> anyhow::Result<()> {
-    info!("Server is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server address: {tls_addr}");
-    let shadow_server = Rc::new(ShadowTlsServer::new(tls_addr, server_addr, password));
+    info!("Server is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server address: {tls_addr}\nOpts: {opts}");
+    let nodelay = opts.nodelay;
+    let shadow_server = Rc::new(ShadowTlsServer::new(tls_addr, server_addr, password, opts));
     let listener = TcpListener::bind(&listen)?;
     loop {
         match listener.accept().await {
             Ok((mut conn, addr)) => {
                 info!("Accepted a connection from {addr}");
-                set_tcp_keepalive(&mut conn);
+                mod_tcp_conn(&mut conn, true, nodelay);
                 let server = shadow_server.clone();
                 monoio::spawn(async move { server.relay(conn).await });
             }
