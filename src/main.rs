@@ -2,6 +2,7 @@
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 
+mod arg;
 mod client;
 mod server;
 mod stream;
@@ -82,7 +83,10 @@ fn main() {
                 .from_env_lossy(),
         )
         .init();
-    let args = Arc::new(Args::parse());
+    let args = match arg::get_sip003_arg() {
+        Some(a) => Arc::new(a),
+        None => Arc::new(Args::parse()),
+    };
     let mut threads = Vec::new();
     let parallelism = get_parallelism(&args);
     info!("Started with parallelism {parallelism}");
