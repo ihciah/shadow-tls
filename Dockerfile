@@ -13,6 +13,7 @@ ENV SERVER=""
 ENV TLS=""
 ENV THREADS=""
 ENV PASSWORD=""
+ENV NODELAY=""
 
 COPY ./entrypoint.sh /
 RUN chmod +x /entrypoint.sh && apk add --no-cache ca-certificates

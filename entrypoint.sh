@@ -5,6 +5,11 @@ then
     parameter="$parameter --threads $THREADS"
 fi
 
+if [ ! -z "$NODELAY" ]
+then
+    parameter="$parameter --nodelay"
+fi
+
 if [ "$MODE" = "server" ]
 then
     parameter="$parameter $MODE"

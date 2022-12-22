@@ -11,6 +11,7 @@ services:
       - SERVER=
       - TLS=
       - PASSWORD=
+      - NODELAY=
 
 # Mode: client or server
 # LISTEN: local listen address with port
