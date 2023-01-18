@@ -80,7 +80,7 @@ impl<A> ShadowTlsClient<A> {
         A: std::net::ToSocketAddrs,
     {
         let mut stream = TcpStream::connect(&self.address).await?;
-        mod_tcp_conn(&mut stream, true, self.opts.nodelay);
+        mod_tcp_conn(&mut stream, true, !self.opts.disable_nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
         let tls_stream = self

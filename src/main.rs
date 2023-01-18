@@ -35,8 +35,8 @@ struct Args {
 pub struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
-    #[clap(short, long, help = "Set TCP_NODELAY")]
-    nodelay: bool,
+    #[clap(short, long, help = "Disable TCP_NODELAY")]
+    disable_nodelay: bool,
 }
 
 impl Display for Opts {
@@ -49,7 +49,7 @@ impl Display for Opts {
                 write!(f, "auto adjusted threads")
             }
         }?;
-        write!(f, "; nodelay: {}", self.nodelay)
+        write!(f, "; nodelay: {}", !self.disable_nodelay)
     }
 }
 
@@ -184,7 +184,7 @@ async fn run_client(
     opts: Opts,
 ) -> anyhow::Result<()> {
     info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}\nOpts: {opts}");
-    let nodelay = opts.nodelay;
+    let nodelay = !opts.disable_nodelay;
     let shadow_client = Rc::new(ShadowTlsClient::new(
         &tls_name,
         server_addr,
@@ -215,7 +215,7 @@ async fn run_server(
     opts: Opts,
 ) -> anyhow::Result<()> {
     info!("Server is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server address: {tls_addr}\nOpts: {opts}");
-    let nodelay = opts.nodelay;
+    let nodelay = !opts.disable_nodelay;
     let shadow_server = Rc::new(ShadowTlsServer::new(tls_addr, server_addr, password, opts));
     let listener = TcpListener::bind(&listen)?;
     loop {

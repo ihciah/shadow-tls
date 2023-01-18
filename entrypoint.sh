@@ -5,9 +5,9 @@ then
     parameter="$parameter --threads $THREADS"
 fi
 
-if [ ! -z "$NODELAY" ]
+if [ ! -z "$DISABLE_NODELAY" ]
 then
-    parameter="$parameter --nodelay"
+    parameter="$parameter --disable-nodelay"
 fi
 
 if [ "$MODE" = "server" ]
@@ -45,4 +45,4 @@ then
     parameter="$parameter --password $PASSWORD"
 fi
 
-shadow-tls $parameter
+exec shadow-tls $parameter

@@ -41,7 +41,7 @@ where
 {
     pub async fn relay(&self, in_stream: TcpStream) -> anyhow::Result<()> {
         let mut out_stream = TcpStream::connect(&self.handshake_address).await?;
-        mod_tcp_conn(&mut out_stream, true, self.opts.nodelay);
+        mod_tcp_conn(&mut out_stream, true, !self.opts.disable_nodelay);
         tracing::debug!("handshake server connected");
         let mut in_stream = HashedWriteStream::new(in_stream, self.password.as_bytes())?;
         let mut hmac = in_stream.hmac_handler();
@@ -65,7 +65,7 @@ where
                 let _ = out_stream.shutdown().await;
                 drop(out_stream);
                 let mut data_stream = TcpStream::connect(&self.data_address).await?;
-                mod_tcp_conn(&mut data_stream, true, self.opts.nodelay);
+                mod_tcp_conn(&mut data_stream, true, !self.opts.disable_nodelay);
                 tracing::debug!("data server connected, start relay");
                 let (mut data_r, mut data_w) = data_stream.split();
                 let (result, _) = data_w.write(data_left).await;
