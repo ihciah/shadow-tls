@@ -76,10 +76,9 @@ enum Commands {
         password: String,
         #[clap(
             long = "alpn",
-            default_value = "",
             help = "Application-Layer Protocol Negotiation(like \"http/1.1\")"
         )]
-        alpn: String,
+        alpn: Option<String>,
     },
     #[clap(about = "Run server side")]
     Server {
@@ -120,7 +119,7 @@ impl Args {
                     tls_name.clone(),
                     password.clone(),
                     self.opts.clone(),
-                    alpn.clone(),
+                    TlsExtConfig::new(alpn.clone().map(|alpn| vec![alpn.into_bytes()])),
                 )
                 .await
                 .expect("client exited");
@@ -192,7 +191,7 @@ async fn run_client(
     tls_name: String,
     password: String,
     opts: Opts,
-    alpn: String,
+    tls_ext: TlsExtConfig,
 ) -> anyhow::Result<()> {
     info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}\nOpts: {opts}");
     let nodelay = !opts.disable_nodelay;
@@ -201,7 +200,7 @@ async fn run_client(
         server_addr,
         password,
         opts,
-        TlsExtConfig::new(vec![alpn.into()]),
+        tls_ext,
     )?);
     let listener = TcpListener::bind(&listen)?;
     loop {

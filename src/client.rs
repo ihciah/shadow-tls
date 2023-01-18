@@ -21,11 +21,11 @@ pub struct ShadowTlsClient<A> {
 
 #[derive(Default, Debug)]
 pub struct TlsExtConfig {
-    alpn: Vec<Vec<u8>>,
+    alpn: Option<Vec<Vec<u8>>>,
 }
 
 impl TlsExtConfig {
-    pub fn new(alpn: Vec<Vec<u8>>) -> TlsExtConfig {
+    pub fn new(alpn: Option<Vec<Vec<u8>>>) -> TlsExtConfig {
         TlsExtConfig { alpn }
     }
 }
@@ -54,7 +54,9 @@ impl<A> ShadowTlsClient<A> {
             .with_no_client_auth();
 
         // Set tls config
-        tls_config.alpn_protocols = tls_ext_config.alpn;
+        if let Some(alpn) = tls_ext_config.alpn {
+            tls_config.alpn_protocols = alpn;
+        }
 
         let tls_connector = TlsConnector::from(tls_config);
         let server_name = ServerName::try_from(server_name)?;
