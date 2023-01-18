@@ -19,10 +19,8 @@ jobs:
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-musleabihf
           - arm-unknown-linux-musleabi
-
     steps:
       - uses: actions/checkout@v2
-
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -31,16 +29,13 @@ jobs:
           toolchain: nightly
           default: true
           override: true
-
       - name: Install cross
         run: cargo install cross
-
       - name: Build ${{ matrix.target }}
         timeout-minutes: 120
         run: |
           cross build --release --target ${{ matrix.target }} &&
           mv target/${{ matrix.target }}/release/shadow-tls target/${{ matrix.target }}/release/shadow-tls-${{ matrix.target }}
-
       - name: Upload Github Assets
         uses: softprops/action-gh-release@v1
         env:
@@ -48,7 +43,6 @@ jobs:
         with:
           files: target/${{ matrix.target }}/release/shadow-tls-${{ matrix.target }}
           prerelease: ${{ contains(github.ref, '-') }}
-
   build-unix:
     runs-on: ${{ matrix.os }}
     env:
@@ -69,12 +63,6 @@ jobs:
           toolchain: nightly
           default: true
           override: true
-
-      # https://github.com/actions/virtual-environments/issues/2557#issuecomment-769611326
-      - if: ${{ matrix.target }} == 'aarch64-apple-darwin'
-        run: |
-          sudo xcode-select -s /Applications/Xcode_12.4.app &&
-          sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
       - name: Build release
         shell: bash
         run: |
