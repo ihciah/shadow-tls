@@ -7,7 +7,7 @@ license = "MIT/Apache-2.0"
 name = "shadow-tls"
 readme = "README.md"
 repository = "https://github.com/ihciah/shadow-tls"
-version = "0.2.7"
+version = "0.2.8"
 
 [dependencies]
 monoio = {version = "0.0.9"}
@@ -15,6 +15,7 @@ monoio-rustls = {version = "0.0.7"}
 
 anyhow = "1"
 clap = {version = "4", features = ["derive"]}
+ctrlc = {version = "3", features = ["termination"]}
 hmac = "0.12"
 pin-project-lite = "0.2"
 rustls = {version = "0.20", default-features = false}

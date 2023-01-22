@@ -1,4 +1,4 @@
-FROM rust:1.63-alpine as builder
+FROM rust:1.66-alpine as builder
 WORKDIR /usr/src/shadow-tls
 RUN apk add --no-cache musl-dev libressl-dev
 
@@ -13,7 +13,7 @@ ENV SERVER=""
 ENV TLS=""
 ENV THREADS=""
 ENV PASSWORD=""
-ENV NODELAY=""
+ENV DISABLE_NODELAY=""
 
 COPY ./entrypoint.sh /
 RUN chmod +x /entrypoint.sh && apk add --no-cache ca-certificates

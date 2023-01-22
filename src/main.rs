@@ -171,6 +171,9 @@ fn main() {
         });
         threads.push(t);
     }
+    if let Err(e) = ctrlc::set_handler(|| std::process::exit(0)) {
+        tracing::error!("Unable to register signal handler: {e}");
+    }
     threads.into_iter().for_each(|t| {
         let _ = t.join();
     });

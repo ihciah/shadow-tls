@@ -11,12 +11,13 @@ services:
       - SERVER=
       - TLS=
       - PASSWORD=
-      - NODELAY=
 
-# Mode: client or server
+# Available environs:
+# MODE: client or server
 # LISTEN: local listen address with port
 # SERVER: remote address with port
-# TLS: server name in sni for client mode(like xxx.com.cn)
-#      server address with port for server mode(like xxx.com.cn:443)
+# TLS: domain name in sni for client mode(like xxx.com.cn)
+#      shadow-tls server address with port for server mode(like xxx.com.cn:443)
 # PASSWORD: shadow-tls password
-# THREADS(optional): set threads number
+# THREADS(optional): set threads number(recommend to leave it blank)
+# DISABLE_NODELAY(optional): disable TCP_NODELAY(recommend to leave it blank)
