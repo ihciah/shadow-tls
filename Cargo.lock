@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-tls"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "byteorder",

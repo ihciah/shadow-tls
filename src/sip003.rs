@@ -66,7 +66,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         let host = opts
             .get("host")
             .expect("need host param(like host=www.baidu.com)");
-        let hosts = crate::client::parse_client_addrs(host).expect("tls names parse failed");
+        let hosts = crate::client::parse_client_names(host).expect("tls names parse failed");
         Args {
             cmd: crate::Commands::Client {
                 listen: format!("{ss_local_host}:{ss_local_port}"),

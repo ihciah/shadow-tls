@@ -14,10 +14,45 @@ use crate::{
 /// ShadowTlsClient.
 pub struct ShadowTlsClient<A> {
     tls_connector: TlsConnector,
-    server_names: Box<[ServerName]>,
+    server_names: TlsNames,
     address: A,
     password: String,
     opts: Opts,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TlsNames(Vec<ServerName>);
+
+impl TlsNames {
+    pub fn random_choose(&self) -> &ServerName {
+        self.0.choose(&mut rand::thread_rng()).unwrap()
+    }
+}
+
+impl TryFrom<&str> for TlsNames {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let v: Result<Vec<_>, _> = value.trim().split(';').map(ServerName::try_from).collect();
+        let v = v.map_err(Into::into).and_then(|v| {
+            if v.is_empty() {
+                Err(anyhow::anyhow!("empty tls names"))
+            } else {
+                Ok(v)
+            }
+        })?;
+        Ok(Self(v))
+    }
+}
+
+impl std::fmt::Display for TlsNames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+pub fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
+    TlsNames::try_from(addrs)
 }
 
 #[derive(Default, Debug)]
@@ -34,7 +69,7 @@ impl TlsExtConfig {
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
     pub fn new(
-        server_names: std::slice::Iter<String>,
+        server_names: TlsNames,
         address: A,
         password: String,
         opts: Opts,
@@ -60,15 +95,10 @@ impl<A> ShadowTlsClient<A> {
         }
 
         let tls_connector = TlsConnector::from(tls_config);
-        let mut sni_list = Vec::new();
-        for s in server_names {
-            let sni = ServerName::try_from(s.as_str())?;
-            sni_list.push(sni);
-        }
 
         Ok(Self {
             tls_connector,
-            server_names: sni_list.into_boxed_slice(),
+            server_names,
             address,
             password,
             opts,
@@ -107,11 +137,7 @@ impl<A> ShadowTlsClient<A> {
         mod_tcp_conn(&mut stream, true, !self.opts.disable_nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
-        let endpoint = self
-            .server_names
-            .choose(&mut rand::thread_rng())
-            .expect("empty endpoints set")
-            .clone();
+        let endpoint = self.server_names.random_choose().clone();
         let tls_stream = self.tls_connector.connect(endpoint, stream).await?;
         let (io, _) = tls_stream.into_parts();
         let hash = io.hash();
@@ -119,12 +145,4 @@ impl<A> ShadowTlsClient<A> {
         let stream = io.into_inner();
         Ok((stream, hash))
     }
-}
-
-pub fn parse_client_addrs(addrs: &str) -> anyhow::Result<Vec<String>> {
-    Ok(addrs
-        .trim()
-        .split(';')
-        .map(|a| a.trim().to_string())
-        .collect())
 }

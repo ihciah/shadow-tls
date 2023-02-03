@@ -16,7 +16,7 @@ use tracing::{error, info};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use crate::{
-    client::{parse_client_addrs, ShadowTlsClient, TlsExtConfig},
+    client::{parse_client_names, ShadowTlsClient, TlsExtConfig, TlsNames},
     server::{parse_server_addrs, ShadowTlsServer, TlsAddrs},
     util::mod_tcp_conn,
 };
@@ -75,9 +75,9 @@ enum Commands {
         #[clap(
             long = "sni",
             help = "TLS handshake SNI(like cloud.tencent.com, captive.apple.com;cloud.tencent.com)",
-            value_parser = parse_client_addrs
+            value_parser = parse_client_names
         )]
-        tls_names: Vec<String>,
+        tls_names: TlsNames,
         #[clap(long = "password", help = "Password")]
         password: String,
         #[clap(
@@ -198,16 +198,15 @@ fn get_parallelism(args: &Args) -> usize {
 async fn run_client(
     listen: String,
     server_addr: String,
-    tls_names: Vec<String>,
+    tls_names: TlsNames,
     password: String,
     opts: Opts,
     tls_ext: TlsExtConfig,
 ) -> anyhow::Result<()> {
-    assert!(!tls_names.is_empty(), "empty tls name is not allowed");
-    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server names: {tls_names:?}\nOpts: {opts}");
+    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server names: {tls_names}\nOpts: {opts}");
     let nodelay = !opts.disable_nodelay;
     let shadow_client = Rc::new(ShadowTlsClient::new(
-        tls_names.iter(),
+        tls_names,
         server_addr,
         password,
         opts,
