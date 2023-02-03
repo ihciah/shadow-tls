@@ -7,7 +7,7 @@ license = "MIT/Apache-2.0"
 name = "shadow-tls"
 readme = "README.md"
 repository = "https://github.com/ihciah/shadow-tls"
-version = "0.2.10"
+version = "0.2.11"
 
 [dependencies]
 monoio = {version = "0.0.9"}

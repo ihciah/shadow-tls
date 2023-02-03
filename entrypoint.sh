@@ -28,6 +28,11 @@ then
     then
         parameter="$parameter --sni $TLS"
     fi
+
+    if [ ! -z "$ALPN" ]
+    then
+        parameter="$parameter --alpn $ALPN"
+    fi
 fi
 
 if [ ! -z "$SERVER" ]

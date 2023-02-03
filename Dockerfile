@@ -13,6 +13,7 @@ ENV SERVER=""
 ENV TLS=""
 ENV THREADS=""
 ENV PASSWORD=""
+ENV ALPN=""
 ENV DISABLE_NODELAY=""
 
 COPY ./entrypoint.sh /

@@ -66,6 +66,24 @@ impl TlsExtConfig {
     }
 }
 
+impl std::fmt::Display for TlsExtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.alpn.as_ref() {
+            Some(alpns) => {
+                write!(f, "ALPN(Some(")?;
+                for alpn in alpns.iter() {
+                    write!(f, "{},", String::from_utf8_lossy(alpn))?;
+                }
+                write!(f, "))")?;
+            }
+            None => {
+                write!(f, "ALPN(None)")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
     pub fn new(

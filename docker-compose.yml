@@ -19,5 +19,15 @@ services:
 # TLS: domain name in sni for client mode(like xxx.com.cn)
 #      shadow-tls server address with port for server mode(like xxx.com.cn:443)
 # PASSWORD: shadow-tls password
+# ALPN(optional): set alpns(like http/1.1, http/1.1;h2, recommend to leave it blank if you don't know it)
 # THREADS(optional): set threads number(recommend to leave it blank)
 # DISABLE_NODELAY(optional): disable TCP_NODELAY(recommend to leave it blank)
+
+# Note:
+# Multiple SNIs is supported now.
+# For full help, see https://github.com/ihciah/shadow-tls/wiki/How-to-Run#parameters
+# Server side example: cloudflare.com:1.1.1.1:443;captive.apple.com;cloud.tencent.com
+# Client side example: captive.apple.com;cloud.tencent.com
+# If server is configured with multiple SNIs, server will extract ServerName and find
+#  it in mapping, then use the corresponding backend or the fallback one.
+# If client is configured with multiple SNIs, client will pick one in random.

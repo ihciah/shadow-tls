@@ -64,17 +64,17 @@ enum Commands {
         #[clap(
             long = "listen",
             default_value = "[::1]:8080",
-            help = "Shadow-tls client listen address"
+            help = "Shadow-tls client listen address(like \"[::1]:8080\")"
         )]
         listen: String,
         #[clap(
             long = "server",
-            help = "Your shadow-tls server address(like 1.2.3.4:443)"
+            help = "Your shadow-tls server address(like \"1.2.3.4:443\")"
         )]
         server_addr: String,
         #[clap(
             long = "sni",
-            help = "TLS handshake SNI(like cloud.tencent.com, captive.apple.com;cloud.tencent.com)",
+            help = "TLS handshake SNIs(like \"cloud.tencent.com\", \"captive.apple.com;cloud.tencent.com\")",
             value_parser = parse_client_names
         )]
         tls_names: TlsNames,
@@ -82,26 +82,27 @@ enum Commands {
         password: String,
         #[clap(
             long = "alpn",
-            help = "Application-Layer Protocol Negotiation(like \"http/1.1\")"
+            help = "Application-Layer Protocol Negotiation list(like \"http/1.1\", \"http/1.1;h2\")",
+            value_delimiter = ';'
         )]
-        alpn: Option<String>,
+        alpn: Option<Vec<String>>,
     },
     #[clap(about = "Run server side")]
     Server {
         #[clap(
             long = "listen",
-            default_value = "[::1]:443",
-            help = "Shadow-tls server listen address"
+            default_value = "[::]:443",
+            help = "Shadow-tls server listen address(like \"[::]:443\")"
         )]
         listen: String,
         #[clap(
             long = "server",
-            help = "Your data server address(like 127.0.0.1:8080)"
+            help = "Your data server address(like \"127.0.0.1:8080\")"
         )]
         server_addr: String,
         #[clap(
             long = "tls",
-            help = "TLS handshake server address(like cloud.tencent.com:443, cloudflare.com:1.1.1.1:443;captive.apple.com;cloud.tencent.com)",
+            help = "TLS handshake server address(like \"cloud.tencent.com:443\", \"cloudflare.com:1.1.1.1:443;captive.apple.com;cloud.tencent.com\")",
             value_parser = parse_server_addrs
         )]
         tls_addr: TlsAddrs,
@@ -126,7 +127,10 @@ impl Args {
                     tls_names.clone(),
                     password.clone(),
                     self.opts.clone(),
-                    TlsExtConfig::new(alpn.clone().map(|alpn| vec![alpn.into_bytes()])),
+                    TlsExtConfig::new(
+                        alpn.clone()
+                            .map(|alpns| alpns.into_iter().map(Into::into).collect()),
+                    ),
                 )
                 .await
                 .expect("client exited");
@@ -203,7 +207,7 @@ async fn run_client(
     opts: Opts,
     tls_ext: TlsExtConfig,
 ) -> anyhow::Result<()> {
-    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server names: {tls_names}\nOpts: {opts}");
+    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server names: {tls_names}\nOpts: {opts}\nTLS ext: {tls_ext}");
     let nodelay = !opts.disable_nodelay;
     let shadow_client = Rc::new(ShadowTlsClient::new(
         tls_names,
