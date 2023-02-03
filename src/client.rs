@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use monoio::{io::Splitable, net::TcpStream};
 use monoio_rustls::TlsConnector;
+use rand::seq::SliceRandom;
 use rustls::{OwnedTrustAnchor, RootCertStore, ServerName};
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
 /// ShadowTlsClient.
 pub struct ShadowTlsClient<A> {
     tls_connector: TlsConnector,
-    server_name: ServerName,
+    server_names: Box<[ServerName]>,
     address: A,
     password: String,
     opts: Opts,
@@ -33,7 +34,7 @@ impl TlsExtConfig {
 impl<A> ShadowTlsClient<A> {
     /// Create new ShadowTlsClient.
     pub fn new(
-        server_name: &str,
+        server_names: std::slice::Iter<String>,
         address: A,
         password: String,
         opts: Opts,
@@ -59,10 +60,15 @@ impl<A> ShadowTlsClient<A> {
         }
 
         let tls_connector = TlsConnector::from(tls_config);
-        let server_name = ServerName::try_from(server_name)?;
+        let mut sni_list = Vec::new();
+        for s in server_names {
+            let sni = ServerName::try_from(s.as_str())?;
+            sni_list.push(sni);
+        }
+
         Ok(Self {
             tls_connector,
-            server_name,
+            server_names: sni_list.into_boxed_slice(),
             address,
             password,
             opts,
@@ -101,14 +107,24 @@ impl<A> ShadowTlsClient<A> {
         mod_tcp_conn(&mut stream, true, !self.opts.disable_nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
-        let tls_stream = self
-            .tls_connector
-            .connect(self.server_name.clone(), stream)
-            .await?;
+        let endpoint = self
+            .server_names
+            .choose(&mut rand::thread_rng())
+            .expect("empty endpoints set")
+            .clone();
+        let tls_stream = self.tls_connector.connect(endpoint, stream).await?;
         let (io, _) = tls_stream.into_parts();
         let hash = io.hash();
         tracing::debug!("tls handshake finished, signed hmac: {:?}", hash);
         let stream = io.into_inner();
         Ok((stream, hash))
     }
+}
+
+pub fn parse_client_addrs(addrs: &str) -> anyhow::Result<Vec<String>> {
+    Ok(addrs
+        .trim()
+        .split(';')
+        .map(|a| a.trim().to_string())
+        .collect())
 }

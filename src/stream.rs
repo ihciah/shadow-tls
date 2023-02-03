@@ -61,6 +61,7 @@ pub struct HashedWriteStream<S> {
 // # Safety
 // Here we does not make read and write related, so if S is Split, Self is Split.
 unsafe impl<S: monoio::io::Split> monoio::io::Split for HashedWriteStream<S> {}
+unsafe impl<S: monoio::io::Split> monoio::io::Split for &mut HashedWriteStream<S> {}
 
 impl<S: AsReadFd> AsReadFd for HashedWriteStream<S> {
     fn as_reader_fd(&mut self) -> &monoio::io::as_fd::SharedFdWrapper {

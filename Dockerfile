@@ -1,4 +1,4 @@
-FROM rust:1.66-alpine as builder
+FROM rust:1.67-alpine as builder
 WORKDIR /usr/src/shadow-tls
 RUN apk add --no-cache musl-dev libressl-dev
 

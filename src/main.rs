@@ -16,7 +16,9 @@ use tracing::{error, info};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use crate::{
-    client::ShadowTlsClient, client::TlsExtConfig, server::ShadowTlsServer, util::mod_tcp_conn,
+    client::{parse_client_addrs, ShadowTlsClient, TlsExtConfig},
+    server::{parse_server_addrs, ShadowTlsServer, TlsAddrs},
+    util::mod_tcp_conn,
 };
 
 #[derive(Parser, Debug)]
@@ -70,8 +72,12 @@ enum Commands {
             help = "Your shadow-tls server address(like 1.2.3.4:443)"
         )]
         server_addr: String,
-        #[clap(long = "sni", help = "TLS handshake SNI(like cloud.tencent.com)")]
-        tls_name: String,
+        #[clap(
+            long = "sni",
+            help = "TLS handshake SNI(like cloud.tencent.com, captive.apple.com;cloud.tencent.com)",
+            value_parser = parse_client_addrs
+        )]
+        tls_names: Vec<String>,
         #[clap(long = "password", help = "Password")]
         password: String,
         #[clap(
@@ -95,9 +101,10 @@ enum Commands {
         server_addr: String,
         #[clap(
             long = "tls",
-            help = "TLS handshake server address(with port, like cloud.tencent.com:443)"
+            help = "TLS handshake server address(like cloud.tencent.com:443, cloudflare.com:1.1.1.1:443;captive.apple.com;cloud.tencent.com)",
+            value_parser = parse_server_addrs
         )]
-        tls_addr: String,
+        tls_addr: TlsAddrs,
         #[clap(long = "password", help = "Password")]
         password: String,
     },
@@ -109,14 +116,14 @@ impl Args {
             Commands::Client {
                 listen,
                 server_addr,
-                tls_name,
+                tls_names,
                 password,
                 alpn,
             } => {
                 run_client(
                     listen.clone(),
                     server_addr.clone(),
-                    tls_name.clone(),
+                    tls_names.clone(),
                     password.clone(),
                     self.opts.clone(),
                     TlsExtConfig::new(alpn.clone().map(|alpn| vec![alpn.into_bytes()])),
@@ -191,15 +198,16 @@ fn get_parallelism(args: &Args) -> usize {
 async fn run_client(
     listen: String,
     server_addr: String,
-    tls_name: String,
+    tls_names: Vec<String>,
     password: String,
     opts: Opts,
     tls_ext: TlsExtConfig,
 ) -> anyhow::Result<()> {
-    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server name: {tls_name}\nOpts: {opts}");
+    assert!(!tls_names.is_empty(), "empty tls name is not allowed");
+    info!("Client is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server names: {tls_names:?}\nOpts: {opts}");
     let nodelay = !opts.disable_nodelay;
     let shadow_client = Rc::new(ShadowTlsClient::new(
-        &tls_name,
+        tls_names.iter(),
         server_addr,
         password,
         opts,
@@ -224,14 +232,15 @@ async fn run_client(
 async fn run_server(
     listen: String,
     server_addr: String,
-    tls_addr: String,
+    tls_addr: TlsAddrs,
     password: String,
     opts: Opts,
 ) -> anyhow::Result<()> {
     info!("Server is running!\nListen address: {listen}\nRemote address: {server_addr}\nTLS server address: {tls_addr}\nOpts: {opts}");
     let nodelay = !opts.disable_nodelay;
     let shadow_server = Rc::new(ShadowTlsServer::new(tls_addr, server_addr, password, opts));
-    let listener = TcpListener::bind(&listen)?;
+    let listener = TcpListener::bind(&listen)
+        .map_err(|e| anyhow::anyhow!("bind failed, check if the port is used: {e}"))?;
     loop {
         match listener.accept().await {
             Ok((mut conn, addr)) => {

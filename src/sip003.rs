@@ -50,12 +50,14 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
     let args = if opts.get("server").is_some() {
         let tls_addr = opts
             .get("tls")
-            .expect("need tls param(like tls=xxx.com:443)");
+            .expect("tls param must be specified(like tls=xxx.com:443)");
+        let tls_addrs = crate::server::parse_server_addrs(tls_addr)
+            .expect("tls param parse failed(like tls=xxx.com:443 or tls=yyy.com:1.2.3.4:443;zzz.com:443;xxx.com)");
         Args {
             cmd: crate::Commands::Server {
                 listen: format!("{ss_remote_host}:{ss_remote_port}"),
                 server_addr: format!("{ss_local_host}:{ss_local_port}"),
-                tls_addr: tls_addr.to_owned(),
+                tls_addr: tls_addrs,
                 password: passwd.to_owned(),
             },
             opts: args_opts,
@@ -64,11 +66,12 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         let host = opts
             .get("host")
             .expect("need host param(like host=www.baidu.com)");
+        let hosts = crate::client::parse_client_addrs(host).expect("tls names parse failed");
         Args {
             cmd: crate::Commands::Client {
                 listen: format!("{ss_local_host}:{ss_local_port}"),
                 server_addr: format!("{ss_remote_host}:{ss_remote_port}"),
-                tls_name: host.to_owned(),
+                tls_names: hosts,
                 password: passwd.to_owned(),
                 alpn: Default::default(),
             },

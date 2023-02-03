@@ -1,8 +1,12 @@
-use std::net::ToSocketAddrs;
+use std::{borrow::Cow, io::Read, net::ToSocketAddrs, ptr::copy_nonoverlapping};
 
+use byteorder::{BigEndian, ReadBytesExt};
 use monoio::{
-    buf::{IoBuf, Slice, SliceMut},
-    io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
+    buf::{IoBuf, IoBufMut, Slice, SliceMut},
+    io::{
+        AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, PrefixedReadIo,
+        Splitable,
+    },
     net::TcpStream,
 };
 
@@ -15,16 +19,108 @@ use crate::{
     Opts,
 };
 
+const HANDSHAKE: u8 = 0x16;
+const TLS_MAJOR: u8 = 0x03;
+const TLS_MINOR: (u8, u8) = (0x03, 0x01);
+const HEADER_BUF_SIZE: usize = 5;
+const CLIENT_HELLO: u8 = 1;
+const SNI_EXT_TYPE: u16 = 0;
+
 /// ShadowTlsServer.
-pub struct ShadowTlsServer<RA, RB> {
-    handshake_address: RA,
-    data_address: RB,
+pub struct ShadowTlsServer<DA> {
+    handshake_address: TlsAddrs,
+    data_address: DA,
     password: String,
     opts: Opts,
 }
 
-impl<HA, DA> ShadowTlsServer<HA, DA> {
-    pub fn new(handshake_address: HA, data_address: DA, password: String, opts: Opts) -> Self {
+#[derive(Clone, Debug, PartialEq)]
+pub struct TlsAddrs {
+    dispatch: rustc_hash::FxHashMap<String, String>,
+    fallback: String,
+}
+
+impl TlsAddrs {
+    fn find(&self, key: Option<&str>) -> &str {
+        match key {
+            Some(k) => self.dispatch.get(k).unwrap_or(&self.fallback),
+            None => &self.fallback,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.dispatch.is_empty()
+    }
+}
+
+impl TryFrom<&str> for TlsAddrs {
+    type Error = anyhow::Error;
+
+    fn try_from(arg: &str) -> Result<Self, Self::Error> {
+        let mut rev_parts = arg.split(';').rev();
+        let fallback = rev_parts
+            .next()
+            .and_then(|x| if x.trim().is_empty() { None } else { Some(x) })
+            .ok_or_else(|| anyhow::anyhow!("empty server addrs"))?;
+        let fallback = if !fallback.contains(':') {
+            format!("{fallback}:443")
+        } else {
+            fallback.to_string()
+        };
+
+        let mut dispatch = rustc_hash::FxHashMap::default();
+        for p in rev_parts {
+            let mut p = p.trim().split(':').rev();
+            let mut port = Cow::<'static, str>::Borrowed("443");
+            let maybe_port = p
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("empty part found in server addrs"))?;
+            let host = if maybe_port.parse::<u16>().is_ok() {
+                // there is a port at the end
+                port = maybe_port.into();
+                p.next()
+                    .ok_or_else(|| anyhow::anyhow!("no host found in server addrs part"))?
+            } else {
+                maybe_port
+            };
+            let key = match p.next() {
+                Some(key) => key,
+                None => host,
+            };
+            if p.next().is_some() {
+                return Err(anyhow::anyhow!("unrecognized server addrs part"));
+            }
+            if dispatch
+                .insert(key.to_string(), format!("{host}:{port}"))
+                .is_some()
+            {
+                return Err(anyhow::anyhow!("duplicate server addrs part found"));
+            }
+        }
+        Ok(TlsAddrs { dispatch, fallback })
+    }
+}
+
+pub fn parse_server_addrs(arg: &str) -> anyhow::Result<TlsAddrs> {
+    TlsAddrs::try_from(arg)
+}
+
+impl std::fmt::Display for TlsAddrs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (k, v) in self.dispatch.iter() {
+            write!(f, "{k}->{v};")?;
+        }
+        write!(f, "fallback->{}", self.fallback)
+    }
+}
+
+impl<DA> ShadowTlsServer<DA> {
+    pub fn new(
+        handshake_address: TlsAddrs,
+        data_address: DA,
+        password: String,
+        opts: Opts,
+    ) -> Self {
         Self {
             handshake_address,
             data_address,
@@ -34,19 +130,33 @@ impl<HA, DA> ShadowTlsServer<HA, DA> {
     }
 }
 
-impl<HA, DA> ShadowTlsServer<HA, DA>
-where
-    HA: ToSocketAddrs,
-    DA: ToSocketAddrs,
-{
+impl<DA: ToSocketAddrs> ShadowTlsServer<DA> {
     pub async fn relay(&self, in_stream: TcpStream) -> anyhow::Result<()> {
-        let mut out_stream = TcpStream::connect(&self.handshake_address).await?;
-        mod_tcp_conn(&mut out_stream, true, !self.opts.disable_nodelay);
-        tracing::debug!("handshake server connected");
+        // wrap in_stream with hash layer
         let mut in_stream = HashedWriteStream::new(in_stream, self.password.as_bytes())?;
         let mut hmac = in_stream.hmac_handler();
+
+        // read and extract server name
+        // if there is only one fallback server, skip it
+        let (prefix, server_name) = match self.handshake_address.is_empty() {
+            true => (Vec::new(), None),
+            false => extract_sni(&mut in_stream).await?,
+        };
+        let mut prefixed_io = PrefixedReadIo::new(&mut in_stream, std::io::Cursor::new(prefix));
+        tracing::debug!("server name extracted from SNI extention: {server_name:?}");
+
+        // choose handshake server addr and connect
+        let server_name = server_name.and_then(|s| String::from_utf8(s).ok());
+        let addr = self
+            .handshake_address
+            .find(server_name.as_ref().map(AsRef::as_ref));
+        let mut out_stream = TcpStream::connect(addr).await?;
+        mod_tcp_conn(&mut out_stream, true, !self.opts.disable_nodelay);
+        tracing::debug!("handshake server connected: {addr}");
+
+        // copy stage 1
         let (mut out_r, mut out_w) = out_stream.split();
-        let (mut in_r, mut in_w) = in_stream.split();
+        let (mut in_r, mut in_w) = prefixed_io.split();
         let (switch, cp) = FirstRetGroup::new(
             copy_until_handshake_finished(&mut in_r, &mut out_w, &hmac),
             Box::pin(copy_until_eof(&mut out_r, &mut in_w)),
@@ -55,6 +165,7 @@ where
         hmac.disable();
         tracing::debug!("handshake finished, switch: {switch:?}");
 
+        // copy stage 2
         match switch {
             SwitchResult::Switch(data_left) => {
                 drop(cp);
@@ -113,12 +224,8 @@ where
     W: AsyncWriteRent,
 {
     const HMAC_SIZE: usize = 8;
-    const HANDSHAKE: u8 = 0x16;
     const CHANGE_CIPHER_SPEC: u8 = 0x14;
-    const HEADER_BUF_SIZE: usize = 5;
-    const TLS_MAJOR: u8 = 0x03;
-    const TLS_MINOR: (u8, u8) = (0x03, 0x01);
-    // We maintain 2 status to make sure current session is in an tls session.
+    // We maintain 2 state to make sure current session is in an tls session.
     // This is essential for preventing active detection.
     let mut has_seen_change_cipher_spec = false;
     let mut has_seen_handshake = false;
@@ -279,5 +386,189 @@ where
             tracing::debug!("hmac not matches after 3 times, fallback to direct");
             return Ok(SwitchResult::DirectProxy);
         }
+    }
+}
+
+macro_rules! read_ok {
+    ($res: expr, $data: expr) => {
+        match $res {
+            Ok(r) => r,
+            Err(_) => {
+                return Ok(($data, None));
+            }
+        }
+    };
+}
+
+async fn extract_sni<R: AsyncReadRent>(mut r: R) -> std::io::Result<(Vec<u8>, Option<Vec<u8>>)> {
+    let header = vec![0; HEADER_BUF_SIZE];
+    let (res, header) = r.read_exact(header).await;
+    res?;
+
+    // validate header and fail fast
+    if header[0] != HANDSHAKE
+        || header[1] != TLS_MAJOR
+        || (header[2] != TLS_MINOR.0 && header[2] != TLS_MINOR.1)
+    {
+        return Ok((header, None));
+    }
+
+    // read tls frame length
+    let mut size: [u8; 2] = Default::default();
+    size.copy_from_slice(&header[3..5]);
+    let data_size = u16::from_be_bytes(size);
+    tracing::debug!("read handshake length {}", data_size);
+
+    // read tls frame
+    let mut data = vec![0; data_size as usize + HEADER_BUF_SIZE];
+    unsafe { copy_nonoverlapping(header.as_ptr(), data.as_mut_ptr(), HEADER_BUF_SIZE) };
+    let (res, data_slice) = r.read_exact(data.slice_mut(5..)).await;
+    res?;
+
+    // validate client hello
+    let data_slice: SliceMut<Vec<u8>> = data_slice;
+    let data = data_slice.into_inner();
+    let mut cursor = std::io::Cursor::new(&data[HEADER_BUF_SIZE..]);
+    if read_ok!(cursor.read_u8(), data) != CLIENT_HELLO {
+        tracing::debug!("first packet is not client hello");
+        return Ok((data, None));
+    }
+    // length[0] must be 0
+    if read_ok!(cursor.read_u8(), data) != 0 {
+        tracing::debug!("client hello length first byte is not zero");
+        return Ok((data, None));
+    }
+    // client hello length[1..=2]
+    let prot_size = read_ok!(cursor.read_u16::<BigEndian>(), data);
+    if prot_size + 4 > data_size {
+        tracing::debug!("invalid client hello length");
+        return Ok((data, None));
+    }
+    // reset cursor with new smaller length limit
+    let mut cursor =
+        std::io::Cursor::new(&data[HEADER_BUF_SIZE + 4..HEADER_BUF_SIZE + 4 + prot_size as usize]);
+    // skip 2 byte version
+    read_ok!(cursor.read_u16::<BigEndian>(), data);
+    // skip 32 byte random
+    read_ok!(cursor.skip(32), data);
+    // skip session id
+    read_ok!(cursor.skip_by_u8(), data);
+    // skip cipher suites
+    read_ok!(cursor.skip_by_u16(), data);
+    // skip compression method
+    read_ok!(cursor.skip_by_u8(), data);
+    // skip ext length
+    read_ok!(cursor.read_u16::<BigEndian>(), data);
+
+    loop {
+        let ext_type = read_ok!(cursor.read_u16::<BigEndian>(), data);
+        if ext_type != SNI_EXT_TYPE {
+            read_ok!(cursor.skip_by_u16(), data);
+            continue;
+        }
+        tracing::debug!("found SNI extension");
+        let _ext_len = read_ok!(cursor.read_u16::<BigEndian>(), data);
+        let _sni_len = read_ok!(cursor.read_u16::<BigEndian>(), data);
+        // must be host_name
+        if read_ok!(cursor.read_u8(), data) != 0 {
+            return Ok((data, None));
+        }
+        let sni = Some(read_ok!(cursor.read_by_u16(), data));
+        return Ok((data, sni));
+    }
+}
+
+trait CursorExt {
+    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>>;
+    fn skip(&mut self, n: usize) -> std::io::Result<()>;
+    fn skip_by_u8(&mut self) -> std::io::Result<u8>;
+    fn skip_by_u16(&mut self) -> std::io::Result<u16>;
+}
+
+impl<T> CursorExt for std::io::Cursor<T>
+where
+    std::io::Cursor<T>: std::io::Read,
+{
+    #[inline]
+    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>> {
+        let len = self.read_u16::<BigEndian>()?;
+        let mut buf = vec![0; len as usize];
+        self.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    #[inline]
+    fn skip(&mut self, n: usize) -> std::io::Result<()> {
+        for _ in 0..n {
+            self.read_u8()?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn skip_by_u8(&mut self) -> std::io::Result<u8> {
+        let len = self.read_u8()?;
+        self.skip(len as usize)?;
+        Ok(len)
+    }
+
+    #[inline]
+    fn skip_by_u16(&mut self) -> std::io::Result<u16> {
+        let len = self.read_u16::<BigEndian>()?;
+        self.skip(len as usize)?;
+        Ok(len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_map<K: Into<String>, V: Into<String>>(
+        kvs: Vec<(K, V)>,
+    ) -> rustc_hash::FxHashMap<String, String> {
+        kvs.into_iter().map(|(k, v)| (k.into(), v.into())).collect()
+    }
+
+    macro_rules! map {
+        [] => {rustc_hash::FxHashMap::<String, String>::default()};
+        [$($k:expr => $v:expr),*] => {to_map(vec![$(($k.to_owned(), $v.to_owned())), *])};
+        [$($k:expr => $v:expr,)*] => {to_map(vec![$(($k.to_owned(), $v.to_owned())), *])};
+    }
+
+    macro_rules! s {
+        ($v:expr) => {
+            $v.to_string()
+        };
+    }
+
+    #[test]
+    fn parse_tls_addrs() {
+        assert_eq!(
+            parse_server_addrs("google.com").unwrap(),
+            TlsAddrs {
+                dispatch: map![],
+                fallback: s!("google.com:443")
+            }
+        );
+        assert_eq!(
+            parse_server_addrs("feishu.cn;cloudflare.com:1.1.1.1:80;google.com").unwrap(),
+            TlsAddrs {
+                dispatch: map![
+                    "feishu.cn" => "feishu.cn:443",
+                    "cloudflare.com" => "1.1.1.1:80",
+                ],
+                fallback: s!("google.com:443")
+            }
+        );
+        assert_eq!(
+            parse_server_addrs("captive.apple.com;feishu.cn:80").unwrap(),
+            TlsAddrs {
+                dispatch: map![
+                    "captive.apple.com" => "captive.apple.com:443",
+                ],
+                fallback: s!("feishu.cn:80")
+            }
+        );
     }
 }
