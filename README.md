@@ -1,5 +1,5 @@
 # Shadow TLS
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_shield)
+[![Build Docker Image](https://github.com/ihciah/shadow-tls/actions/workflows/build-docker-image.yml/badge.svg)](https://github.com/ihciah/shadow-tls/pkgs/container/shadow-tls) [![Build Releas](https://github.com/ihciah/shadow-tls/actions/workflows/build-release.yml/badge.svg)](https://github.com/ihciah/shadow-tls/releases) [![Crates.io](https://img.shields.io/crates/v/shadow-tls.svg)](https://crates.io/crates/shadow-tls) [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_shield)
 
 一个**可以使用别人的受信证书**的 TLS 伪装代理。
 
@@ -23,6 +23,9 @@ It works like [trojan](https://github.com/trojan-gfw/trojan) but it does not req
 2. 使用预编译的二进制
 
     从 [Release 页面](https://github.com/ihciah/shadow-tls/releases)下载对应平台的二进制文件, 然后运行即可。运行指南可以 `./shadow-tls client --help` 或 `./shadow-tls server --help` 看到。
+
+更详细的使用指南请参考 [Wiki](https://github.com/ihciah/shadow-tls/wiki/How-to-Run)。
+
 ---
 
 Normally you need to deploy this service on both sides of the firewall. And it is usually used with an encryption proxy (because this project does not include encryption and proxy request encapsulation, which is not our goal).
@@ -33,6 +36,7 @@ Normally you need to deploy this service on both sides of the firewall. And it i
 2. Use prebuilt binary
     Download the binary from [Release page](https://github.com/ihciah/shadow-tls/releases) and run it.
 
+For more detailed usage guide, please refer to [Wiki](https://github.com/ihciah/shadow-tls/wiki/How-to-Run).
 
 ## How it Works
 On client side, just do tls handshake. And for server, we have to relay data as well as parsing tls handshake to handshaking server which will provide valid certificate. We need to know when the tls handshaking is finished. Once finished, we can relay data to our real server.
