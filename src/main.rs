@@ -161,7 +161,8 @@ fn main() {
         .with(
             EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive("rustls=off".parse().unwrap()),
         )
         .init();
     let args = match sip003::get_sip003_arg() {

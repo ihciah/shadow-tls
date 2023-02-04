@@ -1,4 +1,6 @@
-use std::{borrow::Cow, io::Read, net::ToSocketAddrs, ptr::copy_nonoverlapping};
+use std::{
+    borrow::Cow, collections::VecDeque, io::Read, net::ToSocketAddrs, ptr::copy_nonoverlapping,
+};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use monoio::{
@@ -238,6 +240,8 @@ where
     let mut data_hmac_buf = vec![0_u8; HMAC_SIZE].into_boxed_slice();
     let mut data_buf = vec![0_u8; 2048];
     let mut application_data_count: usize = 0;
+
+    let mut hashes = VecDeque::with_capacity(10);
     loop {
         let header_buf_slice = SliceMut::new(header_buf, header_read_len, HEADER_BUF_SIZE);
         let (res, header_buf_slice_) = read_half.read(header_buf_slice).await;
@@ -352,8 +356,15 @@ where
         // Now hmac has been read and copied.
         // If hmac matches, we need to read current data and return.
         let hash = hmac.hash();
-        tracing::debug!("hmac calculated: {hash:?}");
-        if data_hmac_buf[0..HMAC_SIZE] == hash[0..HMAC_SIZE] {
+        let mut hash_trim = [0; HMAC_SIZE];
+        unsafe { copy_nonoverlapping(hash.as_ptr(), hash_trim.as_mut_ptr(), HMAC_SIZE) };
+        tracing::debug!("hmac calculated: {hash_trim:?}");
+        if hashes.len() + 1 > hashes.capacity() {
+            hashes.pop_front();
+        }
+        hashes.push_back(hash_trim);
+        unsafe { copy_nonoverlapping(data_hmac_buf.as_ptr(), hash_trim.as_mut_ptr(), HMAC_SIZE) };
+        if hashes.contains(&hash_trim) {
             tracing::debug!("hmac matches");
             let pure_data = vec![0; data_size - HMAC_SIZE];
             let (read_res, pure_data) = read_half.read_exact(pure_data).await;

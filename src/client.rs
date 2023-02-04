@@ -132,13 +132,14 @@ impl<A> ShadowTlsClient<A> {
     where
         A: std::net::ToSocketAddrs,
     {
-        let (mut out_stream, hash) = self.connect().await?;
+        let (mut out_stream, hash, session) = self.connect().await?;
         let mut hash_8b = [0; 8];
         unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), hash_8b.as_mut_ptr(), 8) };
-        let (mut out_r, mut out_w) = out_stream.split();
+        let (out_r, mut out_w) = out_stream.split();
         let (mut in_r, mut in_w) = in_stream.split();
+        let mut session_filtered_out_r = crate::stream::SessionFilterStream::new(session, out_r);
         let (a, b) = monoio::join!(
-            copy_without_application_data(&mut out_r, &mut in_w),
+            copy_without_application_data(&mut session_filtered_out_r, &mut in_w),
             copy_with_application_data(&mut in_r, &mut out_w, Some(hash_8b))
         );
         let (_, _) = (a?, b?);
@@ -147,7 +148,7 @@ impl<A> ShadowTlsClient<A> {
     }
 
     /// Connect remote, do handshaking and calculate HMAC.
-    async fn connect(&self) -> anyhow::Result<(TcpStream, [u8; 20])>
+    async fn connect(&self) -> anyhow::Result<(TcpStream, [u8; 20], rustls::ClientConnection)>
     where
         A: std::net::ToSocketAddrs,
     {
@@ -157,10 +158,10 @@ impl<A> ShadowTlsClient<A> {
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
         let endpoint = self.server_names.random_choose().clone();
         let tls_stream = self.tls_connector.connect(endpoint, stream).await?;
-        let (io, _) = tls_stream.into_parts();
+        let (io, session) = tls_stream.into_parts();
         let hash = io.hash();
         tracing::debug!("tls handshake finished, signed hmac: {:?}", hash);
         let stream = io.into_inner();
-        Ok((stream, hash))
+        Ok((stream, hash, session))
     }
 }
