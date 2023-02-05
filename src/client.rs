@@ -1,6 +1,9 @@
-use std::net::SocketAddr;
+use std::{rc::Rc, sync::Arc};
 
-use monoio::{io::Splitable, net::TcpStream};
+use monoio::{
+    io::Splitable,
+    net::{TcpListener, TcpStream},
+};
 use monoio_rustls::TlsConnector;
 use rand::seq::SliceRandom;
 use rustls::{OwnedTrustAnchor, RootCertStore, ServerName};
@@ -8,16 +11,17 @@ use rustls::{OwnedTrustAnchor, RootCertStore, ServerName};
 use crate::{
     stream::HashedReadStream,
     util::{copy_with_application_data, copy_without_application_data, mod_tcp_conn},
-    Opts,
 };
 
 /// ShadowTlsClient.
-pub struct ShadowTlsClient<A> {
+#[derive(Clone)]
+pub struct ShadowTlsClient<LA, TA> {
+    listen_addr: Arc<LA>,
+    target_addr: Arc<TA>,
     tls_connector: TlsConnector,
-    server_names: TlsNames,
-    address: A,
-    password: String,
-    opts: Opts,
+    tls_names: Arc<TlsNames>,
+    password: Arc<String>,
+    nodelay: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,8 +65,17 @@ pub struct TlsExtConfig {
 }
 
 impl TlsExtConfig {
+    #[allow(unused)]
     pub fn new(alpn: Option<Vec<Vec<u8>>>) -> TlsExtConfig {
         TlsExtConfig { alpn }
+    }
+}
+
+impl From<Option<Vec<String>>> for TlsExtConfig {
+    fn from(maybe_alpns: Option<Vec<String>>) -> Self {
+        Self {
+            alpn: maybe_alpns.map(|alpns| alpns.into_iter().map(Into::into).collect()),
+        }
     }
 }
 
@@ -84,14 +97,15 @@ impl std::fmt::Display for TlsExtConfig {
     }
 }
 
-impl<A> ShadowTlsClient<A> {
+impl<LA, TA> ShadowTlsClient<LA, TA> {
     /// Create new ShadowTlsClient.
     pub fn new(
-        server_names: TlsNames,
-        address: A,
-        password: String,
-        opts: Opts,
+        listen_addr: LA,
+        target_addr: TA,
+        tls_names: TlsNames,
         tls_ext_config: TlsExtConfig,
+        password: String,
+        nodelay: bool,
     ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -115,22 +129,45 @@ impl<A> ShadowTlsClient<A> {
         let tls_connector = TlsConnector::from(tls_config);
 
         Ok(Self {
+            listen_addr: Arc::new(listen_addr),
+            target_addr: Arc::new(target_addr),
             tls_connector,
-            server_names,
-            address,
-            password,
-            opts,
+            tls_names: Arc::new(tls_names),
+            password: Arc::new(password),
+            nodelay,
         })
     }
 
-    /// Establish connection with remote and relay data.
-    pub async fn relay(
-        &self,
-        mut in_stream: TcpStream,
-        in_stream_addr: SocketAddr,
-    ) -> anyhow::Result<()>
+    pub async fn serve(self) -> anyhow::Result<()>
     where
-        A: std::net::ToSocketAddrs,
+        LA: std::net::ToSocketAddrs + 'static,
+        TA: std::net::ToSocketAddrs + 'static,
+    {
+        let listener = TcpListener::bind(self.listen_addr.as_ref())
+            .map_err(|e| anyhow::anyhow!("bind failed, check if the port is used: {e}"))?;
+        let shared = Rc::new(self);
+        loop {
+            match listener.accept().await {
+                Ok((mut conn, addr)) => {
+                    tracing::info!("Accepted a connection from {addr}");
+                    let client = shared.clone();
+                    mod_tcp_conn(&mut conn, true, shared.nodelay);
+                    monoio::spawn(async move {
+                        let _ = client.relay(conn).await;
+                        tracing::info!("Relay for {addr} finished");
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("Accept failed: {e}");
+                }
+            }
+        }
+    }
+
+    /// Establish connection with remote and relay data.
+    async fn relay(&self, mut in_stream: TcpStream) -> anyhow::Result<()>
+    where
+        TA: std::net::ToSocketAddrs,
     {
         let (mut out_stream, hash, session) = self.connect().await?;
         let mut hash_8b = [0; 8];
@@ -143,20 +180,19 @@ impl<A> ShadowTlsClient<A> {
             copy_with_application_data(&mut in_r, &mut out_w, Some(hash_8b))
         );
         let (_, _) = (a?, b?);
-        tracing::info!("Relay for {in_stream_addr} finished");
         Ok(())
     }
 
     /// Connect remote, do handshaking and calculate HMAC.
     async fn connect(&self) -> anyhow::Result<(TcpStream, [u8; 20], rustls::ClientConnection)>
     where
-        A: std::net::ToSocketAddrs,
+        TA: std::net::ToSocketAddrs,
     {
-        let mut stream = TcpStream::connect(&self.address).await?;
-        mod_tcp_conn(&mut stream, true, !self.opts.disable_nodelay);
+        let mut stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+        mod_tcp_conn(&mut stream, true, self.nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;
-        let endpoint = self.server_names.random_choose().clone();
+        let endpoint = self.tls_names.random_choose().clone();
         let tls_stream = self.tls_connector.connect(endpoint, stream).await?;
         let (io, session) = tls_stream.into_parts();
         let hash = io.hash();

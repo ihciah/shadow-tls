@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use tracing::error;
 
 use super::Args;
@@ -89,7 +89,7 @@ fn parse_sip003_options(s: &str) -> Result<Vec<(String, String)>, anyhow::Error>
         // read key
         let (offset, key) = index_unescaped(&s[i..], &[b'=', b';']).context("read key")?;
         if key.is_empty() {
-            return Err(anyhow::format_err!("empty key in {}", &s[i..]));
+            bail!("empty key in {}", &s[i..]);
         }
         i += offset;
         // end of string or no equals sign
@@ -123,10 +123,7 @@ fn index_unescaped(s: &str, term: &[u8]) -> Result<(usize, String), anyhow::Erro
         if b == b'\\' {
             i += 1;
             if i >= s.len() {
-                return Err(anyhow::format_err!(
-                    "nothing following final escape in {}",
-                    s
-                ));
+                bail!("nothing following final escape in {s}",);
             }
             b = s.as_bytes()[i];
         }

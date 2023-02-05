@@ -1,7 +1,8 @@
 use std::{
-    borrow::Cow, collections::VecDeque, io::Read, net::ToSocketAddrs, ptr::copy_nonoverlapping,
+    borrow::Cow, collections::VecDeque, io::Read, ptr::copy_nonoverlapping, rc::Rc, sync::Arc,
 };
 
+use anyhow::bail;
 use byteorder::{BigEndian, ReadBytesExt};
 use monoio::{
     buf::{IoBuf, IoBufMut, Slice, SliceMut},
@@ -9,7 +10,7 @@ use monoio::{
         AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, PrefixedReadIo,
         Splitable,
     },
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
 };
 
 use crate::{
@@ -18,7 +19,6 @@ use crate::{
         copy_until_eof, copy_with_application_data, copy_without_application_data, mod_tcp_conn,
         ErrGroup, FirstRetGroup, APPLICATION_DATA,
     },
-    Opts,
 };
 
 const HANDSHAKE: u8 = 0x16;
@@ -29,11 +29,13 @@ const CLIENT_HELLO: u8 = 1;
 const SNI_EXT_TYPE: u16 = 0;
 
 /// ShadowTlsServer.
-pub struct ShadowTlsServer<DA> {
-    handshake_address: TlsAddrs,
-    data_address: DA,
-    password: String,
-    opts: Opts,
+#[derive(Clone)]
+pub struct ShadowTlsServer<LA, TA> {
+    listen_addr: Arc<LA>,
+    target_addr: Arc<TA>,
+    tls_addr: Arc<TlsAddrs>,
+    password: Arc<String>,
+    nodelay: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,13 +92,13 @@ impl TryFrom<&str> for TlsAddrs {
                 None => host,
             };
             if p.next().is_some() {
-                return Err(anyhow::anyhow!("unrecognized server addrs part"));
+                bail!("unrecognized server addrs part");
             }
             if dispatch
                 .insert(key.to_string(), format!("{host}:{port}"))
                 .is_some()
             {
-                return Err(anyhow::anyhow!("duplicate server addrs part found"));
+                bail!("duplicate server addrs part found");
             }
         }
         Ok(TlsAddrs { dispatch, fallback })
@@ -116,31 +118,62 @@ impl std::fmt::Display for TlsAddrs {
     }
 }
 
-impl<DA> ShadowTlsServer<DA> {
+impl<LA, TA> ShadowTlsServer<LA, TA> {
     pub fn new(
-        handshake_address: TlsAddrs,
-        data_address: DA,
+        listen_addr: LA,
+        target_addr: TA,
+        tls_addr: TlsAddrs,
         password: String,
-        opts: Opts,
+        nodelay: bool,
     ) -> Self {
         Self {
-            handshake_address,
-            data_address,
-            password,
-            opts,
+            listen_addr: Arc::new(listen_addr),
+            target_addr: Arc::new(target_addr),
+            tls_addr: Arc::new(tls_addr),
+            password: Arc::new(password),
+            nodelay,
         }
     }
 }
 
-impl<DA: ToSocketAddrs> ShadowTlsServer<DA> {
-    pub async fn relay(&self, in_stream: TcpStream) -> anyhow::Result<()> {
+impl<LA, TA> ShadowTlsServer<LA, TA> {
+    pub async fn serve(self) -> anyhow::Result<()>
+    where
+        LA: std::net::ToSocketAddrs + 'static,
+        TA: std::net::ToSocketAddrs + 'static,
+    {
+        let listener = TcpListener::bind(self.listen_addr.as_ref())
+            .map_err(|e| anyhow::anyhow!("bind failed, check if the port is used: {e}"))?;
+        let shared = Rc::new(self);
+        loop {
+            match listener.accept().await {
+                Ok((mut conn, addr)) => {
+                    tracing::info!("Accepted a connection from {addr}");
+                    let server = shared.clone();
+                    mod_tcp_conn(&mut conn, true, shared.nodelay);
+                    monoio::spawn(async move {
+                        let _ = server.relay(conn).await;
+                        tracing::info!("Relay for {addr} finished");
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("Accept failed: {e}");
+                }
+            }
+        }
+    }
+
+    async fn relay(&self, in_stream: TcpStream) -> anyhow::Result<()>
+    where
+        TA: std::net::ToSocketAddrs,
+    {
         // wrap in_stream with hash layer
         let mut in_stream = HashedWriteStream::new(in_stream, self.password.as_bytes())?;
         let mut hmac = in_stream.hmac_handler();
 
         // read and extract server name
         // if there is only one fallback server, skip it
-        let (prefix, server_name) = match self.handshake_address.is_empty() {
+        let (prefix, server_name) = match self.tls_addr.is_empty() {
             true => (Vec::new(), None),
             false => extract_sni(&mut in_stream).await?,
         };
@@ -149,11 +182,9 @@ impl<DA: ToSocketAddrs> ShadowTlsServer<DA> {
 
         // choose handshake server addr and connect
         let server_name = server_name.and_then(|s| String::from_utf8(s).ok());
-        let addr = self
-            .handshake_address
-            .find(server_name.as_ref().map(AsRef::as_ref));
+        let addr = self.tls_addr.find(server_name.as_ref().map(AsRef::as_ref));
         let mut out_stream = TcpStream::connect(addr).await?;
-        mod_tcp_conn(&mut out_stream, true, !self.opts.disable_nodelay);
+        mod_tcp_conn(&mut out_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
 
         // copy stage 1
@@ -177,8 +208,8 @@ impl<DA: ToSocketAddrs> ShadowTlsServer<DA> {
                 // connect our data server
                 let _ = out_stream.shutdown().await;
                 drop(out_stream);
-                let mut data_stream = TcpStream::connect(&self.data_address).await?;
-                mod_tcp_conn(&mut data_stream, true, !self.opts.disable_nodelay);
+                let mut data_stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+                mod_tcp_conn(&mut data_stream, true, self.nodelay);
                 tracing::debug!("data server connected, start relay");
                 let (mut data_r, mut data_w) = data_stream.split();
                 let (result, _) = data_w.write(data_left).await;
