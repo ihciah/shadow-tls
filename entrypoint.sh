@@ -10,6 +10,11 @@ then
     parameter="$parameter --disable-nodelay"
 fi
 
+if [ ! -z "$V3" ]
+then
+    parameter="$parameter --v3"
+fi
+
 if [ "$MODE" = "server" ]
 then
     parameter="$parameter $MODE"

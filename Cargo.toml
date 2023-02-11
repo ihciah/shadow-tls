@@ -7,22 +7,24 @@ license = "MIT/Apache-2.0"
 name = "shadow-tls"
 readme = "README.md"
 repository = "https://github.com/ihciah/shadow-tls"
-version = "0.2.13"
+version = "0.2.14"
 
 [dependencies]
 monoio = {version = "0.0.9"}
-monoio-rustls = {version = "0.0.7"}
+monoio-rustls-fork-shadow-tls = {version = "0.0.7"}
+rustls-fork-shadow-tls = {version = "0.20", default-features = false}
 
 anyhow = "1"
 byteorder = "1"
 clap = {version = "4", features = ["derive"]}
 ctrlc = {version = "3", features = ["termination"]}
 hmac = "0.12"
+local-sync = "0.0.5"
 pin-project-lite = "0.2"
 rand = "0.8"
 rustc-hash = "1"
-rustls = {version = "0.20", default-features = false}
 sha1 = "0.10"
+sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 webpki-roots = "0.22"

@@ -1,145 +1,40 @@
-use std::{
-    future::Future,
-    marker::PhantomData,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{ptr::copy_nonoverlapping, time::Duration};
 
+use byteorder::{BigEndian, WriteBytesExt};
+use local_sync::oneshot::{Receiver, Sender};
 use monoio::{
-    buf::{IoBuf, IoBufMut},
-    io::AsyncWriteRentExt,
+    buf::IoBufMut,
+    io::{AsyncReadRent, AsyncWriteRent, AsyncWriteRentExt, Splitable},
     net::TcpStream,
 };
 
-pin_project_lite::pin_project! {
-    /// ErrGroup works like ErrGroup in golang.
-    /// If the two futures all finished with Ok, self is finished with Ok.
-    /// If any one of them finished with Err, self is finished with Err.
-    pub struct ErrGroup<FA, FB, A, B, E> {
-        #[pin]
-        future_a: FA,
-        #[pin]
-        future_b: FB,
-        slot_a: Option<A>,
-        slot_b: Option<B>,
-        marker: PhantomData<E>,
-    }
-}
+use hmac::Mac;
+use rand::Rng;
+use sha2::{Digest, Sha256};
 
-impl<FA, FB, A, B, E> ErrGroup<FA, FB, A, B, E>
-where
-    FA: Future<Output = Result<A, E>>,
-    FB: Future<Output = Result<B, E>>,
-{
-    pub fn new(future_a: FA, future_b: FB) -> Self {
-        Self {
-            future_a,
-            future_b,
-            slot_a: None,
-            slot_b: None,
-            marker: Default::default(),
-        }
-    }
-}
+use prelude::*;
 
-impl<FA, FB, A, B, E> Future for ErrGroup<FA, FB, A, B, E>
-where
-    FA: Future<Output = Result<A, E>>,
-    FB: Future<Output = Result<B, E>>,
-{
-    type Output = Result<(A, B), E>;
+pub mod prelude {
+    pub const TLS_MAJOR: u8 = 0x03;
+    pub const TLS_MINOR: (u8, u8) = (0x03, 0x01);
+    pub const SNI_EXT_TYPE: u16 = 0;
+    pub const TLS_RANDOM_SIZE: usize = 32;
+    pub const TLS_HEADER_SIZE: usize = 5;
+    pub const TLS_SESSION_ID_SIZE: usize = 32;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        if this.slot_a.is_none() {
-            if let Poll::Ready(r) = this.future_a.poll(cx) {
-                match r {
-                    Ok(a) => *this.slot_a = Some(a),
-                    Err(e) => return Poll::Ready(Err(e)),
-                }
-            }
-        }
-        if this.slot_b.is_none() {
-            if let Poll::Ready(r) = this.future_b.poll(cx) {
-                match r {
-                    Ok(b) => *this.slot_b = Some(b),
-                    Err(e) => return Poll::Ready(Err(e)),
-                }
-            }
-        }
-        if this.slot_a.is_some() && this.slot_b.is_some() {
-            return Poll::Ready(Ok((
-                this.slot_a.take().unwrap(),
-                this.slot_b.take().unwrap(),
-            )));
-        }
-        Poll::Pending
-    }
-}
+    pub const CLIENT_HELLO: u8 = 0x01;
+    pub const SERVER_HELLO: u8 = 0x02;
+    pub const ALERT: u8 = 0x15;
+    pub const HANDSHAKE: u8 = 0x16;
+    pub const APPLICATION_DATA: u8 = 0x17;
+    pub const CHANGE_CIPHER_SPEC: u8 = 0x14;
 
-pin_project_lite::pin_project! {
-    /// FirstRetGroup returns if the first future is ready.
-    pub struct FirstRetGroup<FA, FB, B, E> {
-        #[pin]
-        future_a: FA,
-        #[pin]
-        future_b: Option<FB>,
-        slot_b: Option<B>,
-        marker: PhantomData<E>,
-    }
-}
+    pub const SERVER_RANDOM_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2;
+    pub const SESSION_ID_LEN_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2 + TLS_RANDOM_SIZE;
+    pub const TLS_HMAC_HEADER_SIZE: usize = TLS_HEADER_SIZE + HMAC_SIZE;
 
-pub enum FutureOrOutput<F, R, E>
-where
-    F: Future<Output = Result<R, E>>,
-{
-    Future(F),
-    Output(R),
-}
-
-impl<FA, FB, A, B, E> FirstRetGroup<FA, FB, B, E>
-where
-    FA: Future<Output = Result<A, E>>,
-    FB: Future<Output = Result<B, E>>,
-{
-    pub fn new(future_a: FA, future_b: FB) -> Self {
-        Self {
-            future_a,
-            future_b: Some(future_b),
-            slot_b: None,
-            marker: Default::default(),
-        }
-    }
-}
-
-impl<FA, FB, A, B, E> Future for FirstRetGroup<FA, FB, B, E>
-where
-    FA: Future<Output = Result<A, E>>,
-    FB: Future<Output = Result<B, E>> + Unpin,
-{
-    type Output = Result<(A, FutureOrOutput<FB, B, E>), E>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        if let Poll::Ready(r) = this.future_a.poll(cx) {
-            let b = if let Some(output) = this.slot_b.take() {
-                FutureOrOutput::Output(output)
-            } else {
-                FutureOrOutput::Future(this.future_b.get_mut().take().unwrap())
-            };
-            return Poll::Ready(r.map(|r| (r, b)));
-        }
-        if this.slot_b.is_none() {
-            if let Poll::Ready(r) = this.future_b.as_pin_mut().unwrap().poll(cx) {
-                match r {
-                    Ok(r) => *this.slot_b = Some(r),
-                    Err(e) => return Poll::Ready(Err(e)),
-                }
-            }
-        }
-        Poll::Pending
-    }
+    pub const COPY_BUF_SIZE: usize = 4096;
+    pub const HMAC_SIZE: usize = 4;
 }
 
 pub async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
@@ -153,177 +48,10 @@ where
     Ok(())
 }
 
-// BUF_SIZE < u16::MAX, BUF_SIZE > HEADER_SIZE + copy_with_application_data::N
-// 4K or 8K is enough.
-const BUF_SIZE: usize = 4096;
-// HEADER_SIZE: 0 is application data, 1-2 is tls1.2, 3-4 is payload length.
-const HEADER_SIZE: usize = 5;
-pub const APPLICATION_DATA: u8 = 0x17;
-
-pub async fn copy_with_application_data<'a, const N: usize, R, W>(
-    reader: &'a mut R,
-    writer: &'a mut W,
-    write_prefix: Option<[u8; N]>,
-) -> std::io::Result<u64>
-where
-    R: monoio::io::AsyncReadRent + ?Sized,
-    W: monoio::io::AsyncWriteRent + ?Sized,
-{
-    let mut buf: Vec<u8> = vec![0; BUF_SIZE];
-    buf[0] = APPLICATION_DATA;
-    // 0x03, 0x03: tls 1.2
-    buf[1] = 0x03;
-    buf[2] = 0x03;
-    // prefix
-    let mut buf = if let Some(prefix) = write_prefix {
-        unsafe {
-            std::ptr::copy_nonoverlapping(prefix.as_ptr(), buf.as_mut_ptr().add(HEADER_SIZE), N)
-        };
-        unsafe { buf.set_init(HEADER_SIZE + N) };
-        tracing::debug!("create buf slice with {} bytes prefix", HEADER_SIZE + N);
-        buf.slice_mut(HEADER_SIZE + N..)
-    } else {
-        unsafe { buf.set_init(HEADER_SIZE) };
-        tracing::debug!("create buf slice with {} bytes prefix", HEADER_SIZE);
-        buf.slice_mut(HEADER_SIZE..)
-    };
-
-    let mut transfered: u64 = 0;
-    loop {
-        let (read_res, buf_read) = reader.read(buf).await;
-        match read_res {
-            Ok(n) if n == 0 => {
-                // read closed
-                break;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                // retry
-                buf = buf_read;
-                continue;
-            }
-            Err(e) => {
-                // should return error
-                return Err(e);
-            }
-            Ok(n) => {
-                // go write data
-                tracing::debug!("copy_with_application_data: read {n} bytes data");
-            }
-        }
-        let mut raw_buf = buf_read.into_inner();
-        // convert n to u16 is safe since the buffer will not be resized.
-        let n_u16 = (raw_buf.len() - HEADER_SIZE) as u16;
-        // set 3-4 byte of raw_buf as data size
-        let size_data = n_u16.to_be_bytes();
-        // # Safety
-        // We can make sure there are spaces inside the buffer.
-        unsafe {
-            std::ptr::copy_nonoverlapping(size_data.as_ptr(), raw_buf.as_mut_ptr().add(3), 2);
-        }
-
-        tracing::debug!(
-            "copy_with_application_data: write {} bytes data",
-            raw_buf.len()
-        );
-        let (write_res, buf_) = writer.write_all(raw_buf).await;
-        let n = write_res?;
-        transfered += n as u64;
-        tracing::debug!("reset buf slice with {} bytes prefix", HEADER_SIZE);
-        buf = buf_.slice_mut(HEADER_SIZE..);
-    }
-    let _ = writer.shutdown().await;
-    Ok(transfered)
-}
-
-pub async fn copy_without_application_data<'a, R, W>(
-    reader: &'a mut R,
-    writer: &'a mut W,
-) -> std::io::Result<u64>
-where
-    R: monoio::io::AsyncReadRent + ?Sized,
-    W: monoio::io::AsyncWriteRent + ?Sized,
-{
-    let mut buf: Vec<u8> = vec![0; BUF_SIZE];
-    let mut to_copy = 0;
-    let mut transfered: u64 = 0;
-
-    unsafe { buf.set_init(0) };
-    let mut buf = buf.slice_mut(0..);
-    #[allow(unused_labels)]
-    'r: loop {
-        let (read_res, buf_read) = reader.read(buf).await;
-        match read_res {
-            Ok(n) if n == 0 => {
-                // read closed
-                break;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                // retry
-                buf = buf_read;
-                continue;
-            }
-            Err(e) => {
-                // should return error
-                return Err(e);
-            }
-            Ok(_) => {
-                // go write data or read again if data is not enough
-            }
-        };
-        let mut raw_buf = buf_read.into_inner();
-        let mut read_index = 0;
-
-        loop {
-            // check if we know how much data to copy
-            while to_copy == 0 {
-                // we should parse header to get its size
-                let initialized_length = raw_buf.len();
-                if initialized_length < read_index + HEADER_SIZE {
-                    // if the data is not enough for decoding length,
-                    // we will move the data left to the front of the buffer.
-                    for idx in read_index..initialized_length {
-                        raw_buf[idx - read_index] = raw_buf[idx];
-                    }
-                    // we have to read again because its not enough to parse
-                    buf = raw_buf.slice_mut(initialized_length - read_index..);
-                    continue 'r;
-                }
-                // now there is enough data to parse
-                if raw_buf[read_index] != APPLICATION_DATA {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "unexpected tls content type",
-                    ));
-                }
-                let mut size = [0; 2];
-                size[0] = raw_buf[read_index + 3];
-                size[1] = raw_buf[read_index + 4];
-                to_copy = u16::from_be_bytes(size) as usize;
-                // TODO: check how to handle application data with zero size in other libraries?
-                // If needed, maybe we should throw an error here.
-                read_index += HEADER_SIZE;
-            }
-
-            // now we know how much data to copy
-            let initialized = raw_buf.len() - read_index;
-            if initialized == 0 {
-                // there is no data to copy, we should do read
-                buf = raw_buf.slice_mut(0..);
-                continue 'r;
-            }
-            let copy_size = to_copy.min(initialized);
-            let write_slice = raw_buf.slice(read_index..read_index + copy_size);
-
-            let (write_res, buf_) = writer.write_all(write_slice).await;
-            let n = write_res?;
-            read_index += n;
-            to_copy -= n;
-            transfered += n as u64;
-            raw_buf = buf_.into_inner();
-        }
-    }
-    let _ = writer.shutdown().await;
-    Ok(transfered)
+pub async fn copy_bidirectional(l: &mut TcpStream, r: &mut TcpStream) {
+    let (lr, lw) = l.split();
+    let (rr, rw) = r.split();
+    let _ = monoio::join!(copy_until_eof(lr, rw), copy_until_eof(rr, lw));
 }
 
 pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
@@ -335,4 +63,338 @@ pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
         );
     }
     let _ = conn.set_nodelay(nodelay);
+}
+
+pub struct Hmac(hmac::Hmac<sha1::Sha1>);
+
+impl Hmac {
+    #[inline]
+    pub fn new(password: &str, init_data: (&[u8], &[u8])) -> Self {
+        // Note: infact new_from_slice never returns Err.
+        let mut hmac: hmac::Hmac<sha1::Sha1> =
+            hmac::Hmac::new_from_slice(password.as_bytes()).expect("unable to build hmac instance");
+        hmac.update(init_data.0);
+        hmac.update(init_data.1);
+        Self(hmac)
+    }
+
+    #[inline]
+    pub fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    #[inline]
+    pub fn finalize(&self) -> [u8; HMAC_SIZE] {
+        let hmac = self.0.clone();
+        let hash = hmac.finalize().into_bytes();
+        let mut res = [0; HMAC_SIZE];
+        unsafe { copy_nonoverlapping(hash.as_slice().as_ptr(), res.as_mut_ptr(), HMAC_SIZE) };
+        res
+    }
+
+    #[inline]
+    pub fn to_owned(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+#[inline]
+pub fn xor_slice(data: &mut [u8], key: &[u8]) {
+    data.iter_mut()
+        .zip(key.iter().cycle())
+        .for_each(|(d, k)| *d ^= k);
+}
+
+#[inline]
+pub fn kdf(password: &str, server_random: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(password.as_bytes());
+    hasher.update(server_random);
+    let hash = hasher.finalize();
+    hash.to_vec()
+}
+
+pub async fn verified_relay(
+    mut raw: TcpStream,
+    mut tls: TcpStream,
+    mut hmac_add: Hmac,
+    mut hmac_verify: Hmac,
+) {
+    tracing::debug!("verified relay started");
+    let (mut tls_read, mut tls_write) = tls.split();
+    let (mut raw_read, mut raw_write) = raw.split();
+    let (mut notfied, mut notifier) = local_sync::oneshot::channel::<()>();
+    let _ = monoio::join!(
+        async {
+            copy_remove_appdata_and_verify(
+                &mut tls_read,
+                &mut raw_write,
+                &mut hmac_verify,
+                &mut notifier,
+            )
+            .await;
+            let _ = raw_write.shutdown().await;
+        },
+        async {
+            copy_add_appdata(&mut raw_read, &mut tls_write, &mut hmac_add, &mut notfied).await;
+            let _ = tls_write.shutdown().await;
+        }
+    );
+}
+
+/// Remove application data header, verify hmac, remove the
+/// hmac header and copy.
+async fn copy_remove_appdata_and_verify(
+    read: impl AsyncReadRent,
+    mut write: impl AsyncWriteRent,
+    hmac: &mut Hmac,
+    alert_notifier: &mut Receiver<()>,
+) {
+    const INIT_BUFFER_SIZE: usize = 2048;
+
+    let mut decoder = BufferFrameDecoder::new(read, INIT_BUFFER_SIZE);
+    loop {
+        let maybe_frame = match decoder.next().await {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("io error {e}");
+                alert_notifier.close();
+                return;
+            }
+        };
+        let frame = match maybe_frame {
+            Some(frame) => frame,
+            None => {
+                // EOF
+                return;
+            }
+        };
+        // validate frame
+        match frame[0] {
+            ALERT => {
+                return;
+            }
+            APPLICATION_DATA => {
+                if verify_appdata(frame, hmac) {
+                    let (res, _) = write
+                        .write_all(unsafe {
+                            monoio::buf::RawBuf::new(
+                                frame.as_ptr().add(TLS_HMAC_HEADER_SIZE),
+                                frame.len() - TLS_HMAC_HEADER_SIZE,
+                            )
+                        })
+                        .await;
+                    if let Err(e) = res {
+                        tracing::error!("write data server failed: {e}");
+                        alert_notifier.close();
+                        return;
+                    }
+                } else {
+                    alert_notifier.close();
+                    return;
+                }
+            }
+            _ => {
+                alert_notifier.close();
+                return;
+            }
+        }
+    }
+}
+
+async fn copy_add_appdata(
+    mut read: impl AsyncReadRent,
+    mut write: impl AsyncWriteRent,
+    hmac: &mut Hmac,
+    alert_notified: &mut Sender<()>,
+) {
+    const DEFAULT_DATA: [u8; TLS_HMAC_HEADER_SIZE] =
+        [APPLICATION_DATA, TLS_MAJOR, TLS_MINOR.0, 0, 0, 0, 0, 0, 0];
+
+    let mut buffer = Vec::with_capacity(COPY_BUF_SIZE);
+    buffer.extend_from_slice(&DEFAULT_DATA);
+
+    let alert_notified = alert_notified.closed();
+    monoio::pin!(alert_notified);
+
+    loop {
+        monoio::select! {
+            _ = &mut alert_notified => {
+                send_alert(&mut write).await;
+                return;
+            },
+            (res, buf) = read.read(buffer.slice_mut(TLS_HMAC_HEADER_SIZE..)) => {
+                if matches!(res, Ok(0) | Err(_)) {
+                    send_alert(&mut write).await;
+                    return;
+                }
+                buffer = buf.into_inner();
+                let frame_len = buffer.len() - TLS_HEADER_SIZE;
+                (&mut buffer[3..5])
+                    .write_u16::<BigEndian>(frame_len as u16)
+                    .unwrap();
+
+                hmac.update(&buffer[TLS_HMAC_HEADER_SIZE..]);
+                let hmac_val = hmac.finalize();
+                hmac.update(&hmac_val);
+                unsafe { copy_nonoverlapping(hmac_val.as_ptr(), buffer.as_mut_ptr().add(TLS_HEADER_SIZE), HMAC_SIZE) };
+
+                let (res, buf) = write.write_all(buffer).await;
+                buffer = buf;
+
+                if res.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn verify_appdata(frame: &[u8], hmac: &mut Hmac) -> bool {
+    if frame[1] != TLS_MAJOR || frame[2] != TLS_MINOR.0 || frame.len() < TLS_HMAC_HEADER_SIZE {
+        return false;
+    }
+    hmac.update(&frame[TLS_HMAC_HEADER_SIZE..]);
+    let mut hmac_val = [0; HMAC_SIZE];
+    unsafe {
+        copy_nonoverlapping(
+            frame.as_ptr().add(TLS_HEADER_SIZE),
+            hmac_val.as_mut_ptr(),
+            HMAC_SIZE,
+        )
+    }
+    let hmac_real = hmac.finalize();
+    hmac.update(&hmac_real);
+    hmac_val == hmac_real
+}
+
+async fn send_alert(mut w: impl AsyncWriteRent) {
+    const FULL_SIZE: u8 = 31;
+    const HEADER: [u8; TLS_HEADER_SIZE] = [
+        ALERT,
+        TLS_MAJOR,
+        TLS_MINOR.0,
+        0x00,
+        FULL_SIZE - TLS_HEADER_SIZE as u8,
+    ];
+
+    let mut buf = vec![0; FULL_SIZE as usize];
+    unsafe { copy_nonoverlapping(HEADER.as_ptr(), buf.as_mut_ptr(), HEADER.len()) };
+    rand::thread_rng().fill(&mut buf[HEADER.len()..]);
+
+    let _ = w.write_all(buf).await;
+}
+
+trait ReadExt {
+    fn unexpected_eof(self) -> Self;
+}
+
+impl ReadExt for std::io::Result<usize> {
+    #[inline]
+    fn unexpected_eof(self) -> Self {
+        self.and_then(|n| match n {
+            0 => Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            )),
+            _ => Ok(n),
+        })
+    }
+}
+
+struct BufferFrameDecoder<T> {
+    reader: T,
+    buffer: Option<Vec<u8>>,
+    read_pos: usize,
+}
+
+impl<T: AsyncReadRent> BufferFrameDecoder<T> {
+    #[inline]
+    fn new(reader: T, capacity: usize) -> Self {
+        Self {
+            reader,
+            buffer: Some(Vec::with_capacity(capacity)),
+            read_pos: 0,
+        }
+    }
+
+    // note: uncancelable
+    async fn next(&mut self) -> std::io::Result<Option<&[u8]>> {
+        loop {
+            let l = self.get_buffer().len();
+            match l {
+                0 => {
+                    // empty buffer
+                    if self.feed_data().await? == 0 {
+                        // eof
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                1..=4 => {
+                    // has header but not enough to parse length
+                    self.feed_data().await.unexpected_eof()?;
+                    continue;
+                }
+                _ => {
+                    // buffer is enough to parse length
+                    let buffer = self.get_buffer();
+                    let mut size: [u8; 2] = Default::default();
+                    size.copy_from_slice(&buffer[3..5]);
+                    let data_size = u16::from_be_bytes(size) as usize;
+                    if buffer.len() < TLS_HEADER_SIZE + data_size {
+                        // we will do compact and read more data
+                        self.reserve(TLS_HEADER_SIZE + data_size);
+                        self.feed_data().await.unexpected_eof()?;
+                        continue;
+                    }
+                    // buffer is enough to parse data
+                    let slice = &self.buffer.as_ref().unwrap()
+                        [self.read_pos..self.read_pos + TLS_HEADER_SIZE + data_size];
+                    self.read_pos += TLS_HEADER_SIZE + data_size;
+                    return Ok(Some(slice));
+                }
+            }
+        }
+    }
+
+    // note: uncancelable
+    async fn feed_data(&mut self) -> std::io::Result<usize> {
+        self.compact();
+        let buffer = self.buffer.take().unwrap();
+        let idx = buffer.len();
+        let read_buffer = buffer.slice_mut(idx..);
+        let (res, read_buffer) = self.reader.read(read_buffer).await;
+        self.buffer = Some(read_buffer.into_inner());
+        res
+    }
+
+    #[inline]
+    fn get_buffer(&self) -> &[u8] {
+        &self.buffer.as_ref().unwrap()[self.read_pos..]
+    }
+
+    /// Make sure the Vec has at least that capacity.
+    #[inline]
+    fn reserve(&mut self, n: usize) {
+        let buf = self.buffer.as_mut().unwrap();
+        if n > buf.len() {
+            buf.reserve(n - buf.len());
+        }
+    }
+
+    #[inline]
+    fn compact(&mut self) {
+        if self.read_pos == 0 {
+            return;
+        }
+        let buffer = self.buffer.as_mut().unwrap();
+        let ptr = buffer.as_mut_ptr();
+        let readable_len = buffer.len() - self.read_pos;
+        unsafe {
+            std::ptr::copy(ptr.add(self.read_pos), ptr, readable_len);
+            buffer.set_init(readable_len);
+        }
+        self.read_pos = 0;
+    }
 }

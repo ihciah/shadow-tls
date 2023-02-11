@@ -3,9 +3,9 @@
 #![feature(type_alias_impl_trait)]
 
 mod client;
+mod helper_v2;
 mod server;
 mod sip003;
-mod stream;
 mod util;
 
 use std::fmt::Display;
@@ -38,6 +38,8 @@ struct Opts {
     threads: Option<u8>,
     #[clap(short, long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
+    #[clap(short, long, help = "Use v3 protocol")]
+    v3: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -102,6 +104,7 @@ enum RunningArgs {
         tls_ext: TlsExtConfig,
         password: String,
         nodelay: bool,
+        v3: bool,
     },
     Server {
         listen_addr: String,
@@ -109,6 +112,7 @@ enum RunningArgs {
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
+        v3: bool,
     },
 }
 
@@ -128,6 +132,7 @@ impl From<Args> for RunningArgs {
                 tls_ext: TlsExtConfig::from(alpn),
                 password,
                 nodelay: !args.opts.disable_nodelay,
+                v3: args.opts.v3,
             },
             Commands::Server {
                 listen,
@@ -140,6 +145,7 @@ impl From<Args> for RunningArgs {
                 tls_addr,
                 password,
                 nodelay: !args.opts.disable_nodelay,
+                v3: args.opts.v3,
             },
         }
     }
@@ -155,6 +161,7 @@ impl RunningArgs {
                 tls_ext,
                 password,
                 nodelay,
+                v3,
             } => Ok(Runnable::Client(ShadowTlsClient::new(
                 listen_addr,
                 target_addr,
@@ -162,6 +169,7 @@ impl RunningArgs {
                 tls_ext,
                 password,
                 nodelay,
+                v3,
             )?)),
             RunningArgs::Server {
                 listen_addr,
@@ -169,12 +177,14 @@ impl RunningArgs {
                 tls_addr,
                 password,
                 nodelay,
+                v3,
             } => Ok(Runnable::Server(ShadowTlsServer::new(
                 listen_addr,
                 target_addr,
                 tls_addr,
                 password,
                 nodelay,
+                v3,
             ))),
         }
     }
@@ -189,18 +199,20 @@ impl Display for RunningArgs {
                 tls_names,
                 tls_ext,
                 nodelay,
+                v3,
                 ..
             } => {
-                write!(f, "Client with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server names: {tls_names}\nTLS Extension: {tls_ext}\nTCP_NODELAY: {nodelay}")
+                write!(f, "Client with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server names: {tls_names}\nTLS Extension: {tls_ext}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
             }
             Self::Server {
                 listen_addr,
                 target_addr,
                 tls_addr,
                 nodelay,
+                v3,
                 ..
             } => {
-                write!(f, "Server with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server address: {tls_addr}\nTCP_NODELAY: {nodelay}")
+                write!(f, "Server with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server address: {tls_addr}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
             }
         }
     }

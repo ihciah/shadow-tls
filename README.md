@@ -41,9 +41,9 @@ For more detailed usage guide, please refer to [Wiki](https://github.com/ihciah/
 ## How it Works
 On client side, just do tls handshake. And for server, we have to relay data as well as parsing tls handshake to handshaking server which will provide valid certificate. We need to know when the tls handshaking is finished. Once finished, we can relay data to our real server.
 
-[Full design doc is here](./docs/protocol-en.md).
+Full design doc is here: [v2](./docs/protocol-en.md) | [v3](./docs/protocol-v3-en.md).
 
-[完整的协议设计点这](./docs/protocol-cn.md).
+完整的协议设计: [v2](./docs/protocol-zh.md) | [v3](./docs/protocol-v3-zh.md).
 
 ## Note
 This project relies on [Monoio](https://github.com/bytedance/monoio) which is a high performance rust async runtime with io_uring. However, it does not support windows yet. So this project does not support windows.
