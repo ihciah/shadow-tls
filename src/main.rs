@@ -38,7 +38,7 @@ struct Opts {
     threads: Option<u8>,
     #[clap(short, long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
-    #[clap(short, long, help = "Use v3 protocol")]
+    #[clap(long, help = "Use v3 protocol")]
     v3: bool,
 }
 
