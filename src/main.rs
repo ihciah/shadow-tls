@@ -260,7 +260,7 @@ fn main() {
             let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
                 .enable_timer()
                 .build()
-                .expect("unable to build monoio runtime");
+                .expect("unable to build monoio runtime(please refer to: https://github.com/ihciah/shadow-tls/wiki/How-to-Run#common-issues)");
             let _ = rt.block_on(runnable_clone.serve());
         });
         threads.push(t);

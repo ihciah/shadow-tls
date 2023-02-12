@@ -262,7 +262,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         res?;
         if !client_hello_pass {
             // if client verify failed, bidirectional copy and return
-            tracing::debug!("ClientHello verify failed, will copy bidirectional");
+            tracing::warn!("ClientHello verify failed, will work as a SNI proxy");
             copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
             return Ok(());
         }
@@ -276,12 +276,18 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
             Some(sr) => sr,
             None => {
                 // we cannot extract server random, bidirectional copy and return
-                tracing::debug!("ServerRandom extract failed, will copy bidirectional");
+                tracing::warn!("ServerRandom extract failed, will copy bidirectional");
                 copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
                 return Ok(());
             }
         };
         tracing::debug!("ServerRandom extracted: {server_random:?}");
+
+        if !support_tls13(&first_server_frame) {
+            tracing::error!("TLS 1.3 is not supported, will copy bidirectional");
+            copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
+            return Ok(());
+        }
 
         // stage 1.3.1: create HMAC_ServerRandomC and HMAC_ServerRandom
         let mut hmac_sr_c = Hmac::new(&self.password, (&server_random, b"C"));
@@ -334,7 +340,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         mod_tcp_conn(&mut data_stream, true, self.nodelay);
         let (res, _) = data_stream.write_all(pure_data).await;
         res?;
-        verified_relay(data_stream, in_stream, hmac_sr_s, hmac_sr_c).await;
+        verified_relay(data_stream, in_stream, hmac_sr_s, hmac_sr_c, None).await;
         Ok(())
     }
 }
@@ -626,7 +632,7 @@ async fn extract_sni_v2<R: AsyncReadRent>(mut r: R) -> std::io::Result<(Vec<u8>,
             read_ok!(cursor.skip_by_u16(), data);
             continue;
         }
-        tracing::debug!("found SNI extension");
+        tracing::debug!("found server_name extension");
         let _ext_len = read_ok!(cursor.read_u16::<BigEndian>(), data);
         let _sni_len = read_ok!(cursor.read_u16::<BigEndian>(), data);
         // must be host_name
@@ -652,17 +658,18 @@ async fn read_exact_frame_into(
     mut r: impl AsyncReadRent,
     mut buffer: Vec<u8>,
 ) -> std::io::Result<Vec<u8>> {
+    unsafe { buffer.set_len(0) };
     buffer.reserve(TLS_HEADER_SIZE);
     let (res, header) = r.read_exact(buffer.slice_mut(..TLS_HEADER_SIZE)).await;
     res?;
+    let mut buffer = header.into_inner();
 
     // read tls frame length
     let mut size: [u8; 2] = Default::default();
-    size.copy_from_slice(&header[3..5]);
+    size.copy_from_slice(&buffer[3..5]);
     let data_size = u16::from_be_bytes(size) as usize;
 
     // read tls frame body
-    let mut buffer = header.into_inner();
     buffer.reserve(data_size);
     let (res, data_slice) = r
         .read_exact(buffer.slice_mut(TLS_HEADER_SIZE..TLS_HEADER_SIZE + data_size))
@@ -725,7 +732,7 @@ fn verified_extract_sni(frame: &[u8], password: &str) -> (bool, Option<Vec<u8>>)
             read_ok!(cursor.skip_by_u16());
             continue;
         }
-        tracing::debug!("found SNI extension");
+        tracing::debug!("found server_name extension");
         let _ext_len = read_ok!(cursor.read_u16::<BigEndian>());
         let _sni_len = read_ok!(cursor.read_u16::<BigEndian>());
         // must be host_name
@@ -773,12 +780,22 @@ async fn copy_by_frame_until_hmac_matches(
     let mut g_buffer = Vec::new();
 
     loop {
+        tracing::debug!("copy_by_frame_until_hmac_matches getting frame");
         let buffer = read_exact_frame_into(&mut read, g_buffer).await?;
+        tracing::debug!("copy_by_frame_until_hmac_matches get a frame: {buffer:?}",);
         if buffer.len() > 9 && buffer[0] == APPLICATION_DATA {
             // check hmac
             let mut tmp_hmac = hmac.to_owned();
             tmp_hmac.update(&buffer[TLS_HMAC_HEADER_SIZE..]);
-            if buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE] == tmp_hmac.finalize() {
+            let h = tmp_hmac.finalize();
+
+            tracing::debug!(
+                "tmp hmac({:?}) = {h:?}, raw = {:?}",
+                &buffer[TLS_HMAC_HEADER_SIZE..],
+                &buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE]
+            );
+
+            if buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE] == h {
                 hmac.update(&buffer[TLS_HMAC_HEADER_SIZE..]);
                 hmac.update(&buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE]);
                 return Ok(buffer[TLS_HMAC_HEADER_SIZE..].to_vec());
@@ -812,6 +829,7 @@ async fn copy_by_frame_with_modification(
         monoio::select! {
             // this function can be stopped by a channel when reading.
             _ = &mut stop => {
+                tracing::debug!("copy_by_frame_with_modification recv stop");
                 return Ok(());
             },
             buffer_res = read_exact_frame_into(&mut read, g_buffer) => {
@@ -843,6 +861,44 @@ async fn copy_by_frame_with_modification(
             }
         }
     }
+}
+
+/// Parse ServerHello and return if tls1.3 is supported.
+fn support_tls13(frame: &[u8]) -> bool {
+    if frame.len() < SESSION_ID_LEN_IDX {
+        return false;
+    }
+    let mut cursor = std::io::Cursor::new(&frame[SESSION_ID_LEN_IDX..]);
+    macro_rules! read_ok {
+        ($res: expr) => {
+            match $res {
+                Ok(r) => r,
+                Err(_) => {
+                    return false;
+                }
+            }
+        };
+    }
+
+    // skip session id
+    read_ok!(cursor.skip_by_u8());
+    // skip cipher suites
+    read_ok!(cursor.skip(3));
+    // skip ext length
+    let cnt = read_ok!(cursor.read_u16::<BigEndian>());
+
+    for _ in 0..cnt {
+        let ext_type = read_ok!(cursor.read_u16::<BigEndian>());
+        if ext_type != SUPPORTED_VERSIONS_TYPE {
+            read_ok!(cursor.skip_by_u16());
+            continue;
+        }
+        tracing::debug!("found supported_versions extension");
+        let ext_len = read_ok!(cursor.read_u16::<BigEndian>());
+        let ext_val = read_ok!(cursor.read_u16::<BigEndian>());
+        return ext_len == 2 && ext_val == TLS_13;
+    }
+    false
 }
 
 /// A helper trait for fast read and skip.

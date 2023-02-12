@@ -226,21 +226,21 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         // stage2:
         match server_random {
             None => {
-                tracing::warn!("traffic hijacking detected");
+                tracing::warn!("traffic hijacked or TLS1.3 is not supported");
                 let tls_stream =
                     monoio_rustls_fork_shadow_tls::ClientTlsStream::new(stream, session);
                 if let Err(e) = fake_request(tls_stream).await {
-                    bail!("traffic hijacked, fake request fail: {e}");
+                    bail!("traffic hijacked or TLS1.3 is not supported, fake request fail: {e}");
                 }
-                bail!("traffic hijacked, but fake request success");
+                bail!("traffic hijacked or TLS1.3 is not supported, but fake request success");
             }
-            Some(sr) => {
+            Some((sr, hmac_sr)) => {
                 drop(session);
-                tracing::debug!("ServerRandom extracted: {sr:?}");
+                tracing::debug!("Authorized, ServerRandom extracted: {sr:?}");
                 let hmac_sr_s = Hmac::new(&self.password, (&sr, b"S"));
                 let hmac_sr_c = Hmac::new(&self.password, (&sr, b"C"));
 
-                verified_relay(in_stream, stream, hmac_sr_c, hmac_sr_s).await;
+                verified_relay(in_stream, stream, hmac_sr_c, hmac_sr_s, Some(hmac_sr)).await;
                 Ok(())
             }
         }
@@ -303,11 +303,12 @@ impl<S> StreamWrapper<S> {
 
     /// Return None for unauthorized,
     /// return Some(server_random) for authorized.
-    fn authorized(&self) -> Option<[u8; 32]> {
+    fn authorized(&self) -> Option<([u8; 32], Hmac)> {
         if !self.read_authorized {
             None
         } else {
             self.read_server_random
+                .map(|x| (x, self.read_hmac_key.as_ref().unwrap().0.to_owned()))
         }
     }
 
@@ -322,6 +323,7 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
 
         // read header
         unsafe { buf.set_init(0) };
+        self.read_pos = 0;
         buf.reserve(TLS_HEADER_SIZE);
         let (res, buf) = self.raw.read_exact(buf.slice_mut(0..TLS_HEADER_SIZE)).await;
         match res {
@@ -380,7 +382,6 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
                     if let Some((hmac, key)) = self.read_hmac_key.as_mut() {
                         hmac.update(&buf[TLS_HMAC_HEADER_SIZE..]);
                         if hmac.finalize() == buf[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE] {
-                            tracing::debug!("app data verification success");
                             xor_slice(&mut buf[TLS_HMAC_HEADER_SIZE..], key);
                             unsafe {
                                 copy(
@@ -405,7 +406,6 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
 
         // set buffer
         let buf_len = buf.len();
-        self.read_pos = 0;
         self.read_buf = Some(buf);
         Ok(buf_len)
     }

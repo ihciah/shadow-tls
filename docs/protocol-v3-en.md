@@ -25,6 +25,10 @@ In addition, I also mentioned in [this blog](https://www.ihcblog.com/a-better-tl
 3. Be as weakly aware of the TLS protocol itself as possible, so implementers do not need to hack the TLS library, let alone implement the TLS protocol themselves.
 4. Keep it simple: only act as a TCP flow proxy, no duplicate wheel building.
 
+## About support for TLS 1.2
+The V3 protocol only supports handshake servers that use TLS1.3. You can use `openssl s_client -tls1_3 -connect example.com:443` to probe a server for TLS1.3 support.
+
+To support TLS1.2 would require more awareness of TLS protocol details and would be more complex to implement; given that TLS1.3 is already used by more vendors, we decided to support only TLS1.3.
 
 # Handshake
 This part of the protocol design is based on [restls](https://github.com/3andne/restls), but there are some differences: it is less aware of the details of TLS and easier to implement.

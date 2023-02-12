@@ -18,9 +18,11 @@ pub mod prelude {
     pub const TLS_MAJOR: u8 = 0x03;
     pub const TLS_MINOR: (u8, u8) = (0x03, 0x01);
     pub const SNI_EXT_TYPE: u16 = 0;
+    pub const SUPPORTED_VERSIONS_TYPE: u16 = 43;
     pub const TLS_RANDOM_SIZE: usize = 32;
     pub const TLS_HEADER_SIZE: usize = 5;
     pub const TLS_SESSION_ID_SIZE: usize = 32;
+    pub const TLS_13: u16 = 0x0304;
 
     pub const CLIENT_HELLO: u8 = 0x01;
     pub const SERVER_HELLO: u8 = 0x02;
@@ -119,6 +121,7 @@ pub async fn verified_relay(
     mut tls: TcpStream,
     mut hmac_add: Hmac,
     mut hmac_verify: Hmac,
+    mut hmac_ignore: Option<Hmac>,
 ) {
     tracing::debug!("verified relay started");
     let (mut tls_read, mut tls_write) = tls.split();
@@ -130,6 +133,7 @@ pub async fn verified_relay(
                 &mut tls_read,
                 &mut raw_write,
                 &mut hmac_verify,
+                &mut hmac_ignore,
                 &mut notifier,
             )
             .await;
@@ -147,7 +151,8 @@ pub async fn verified_relay(
 async fn copy_remove_appdata_and_verify(
     read: impl AsyncReadRent,
     mut write: impl AsyncWriteRent,
-    hmac: &mut Hmac,
+    hmac_verify: &mut Hmac,
+    hmac_ignore: &mut Option<Hmac>,
     alert_notifier: &mut Receiver<()>,
 ) {
     const INIT_BUFFER_SIZE: usize = 2048;
@@ -175,7 +180,18 @@ async fn copy_remove_appdata_and_verify(
                 return;
             }
             APPLICATION_DATA => {
-                if verify_appdata(frame, hmac) {
+                if let Some(hi) = hmac_ignore.as_mut() {
+                    if verify_appdata(frame, hi, false) {
+                        // we can ignore the data
+                        tracing::debug!("useless data skipped");
+                        continue;
+                    } else {
+                        tracing::debug!("useless data detector disabled");
+                        hmac_ignore.take();
+                    }
+                }
+
+                if verify_appdata(frame, hmac_verify, true) {
                     let (res, _) = write
                         .write_all(unsafe {
                             monoio::buf::RawBuf::new(
@@ -190,6 +206,7 @@ async fn copy_remove_appdata_and_verify(
                         return;
                     }
                 } else {
+                    tracing::debug!("buffer hmac validate failed");
                     alert_notifier.close();
                     return;
                 }
@@ -250,22 +267,16 @@ async fn copy_add_appdata(
     }
 }
 
-fn verify_appdata(frame: &[u8], hmac: &mut Hmac) -> bool {
+fn verify_appdata(frame: &[u8], hmac: &mut Hmac, sep: bool) -> bool {
     if frame[1] != TLS_MAJOR || frame[2] != TLS_MINOR.0 || frame.len() < TLS_HMAC_HEADER_SIZE {
         return false;
     }
     hmac.update(&frame[TLS_HMAC_HEADER_SIZE..]);
-    let mut hmac_val = [0; HMAC_SIZE];
-    unsafe {
-        copy_nonoverlapping(
-            frame.as_ptr().add(TLS_HEADER_SIZE),
-            hmac_val.as_mut_ptr(),
-            HMAC_SIZE,
-        )
-    }
     let hmac_real = hmac.finalize();
-    hmac.update(&hmac_real);
-    hmac_val == hmac_real
+    if sep {
+        hmac.update(&hmac_real);
+    }
+    frame[TLS_HEADER_SIZE..TLS_HEADER_SIZE + HMAC_SIZE] == hmac_real
 }
 
 async fn send_alert(mut w: impl AsyncWriteRent) {
