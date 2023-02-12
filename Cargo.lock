@@ -379,9 +379,9 @@ dependencies = [
 
 [[package]]
 name = "monoio-rustls-fork-shadow-tls"
-version = "0.0.7"
+version = "0.0.8-mod.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d853bb7dc693f20d7918e0c1344c5c2ad1209e0c0061d962e041bc5423b3e02"
+checksum = "c9ce576264fc2b3a54f3f9d0159e6968cccfcd59cbd24aaac422999490678434"
 dependencies = [
  "bytes",
  "monoio",
@@ -594,9 +594,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-fork-shadow-tls"
-version = "0.20.8"
+version = "0.20.9-mod.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "227b89ca93267855a168e5293f66c74d43afabcdf2239947d3b5904928388161"
+checksum = "a095c00ed7b7606a456667abd022d50437f66bd2b6db1d90c93227e8f329dec8"
 dependencies = [
  "log",
  "ring",
@@ -756,10 +756,11 @@ dependencies = [
 
 [[package]]
 name = "thread_local"
-version = "1.1.4"
+version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5516c27b78311c50bf42c071425c560ac799b11c30b31f87e3081965fe5e0180"
+checksum = "3fdd6f064ccff2d6567adcb3873ca630700f00b5ad3f060c25b5dcfd9a4ce152"
 dependencies = [
+ "cfg-if",
  "once_cell",
 ]
 

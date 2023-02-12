@@ -11,8 +11,8 @@ version = "0.2.15"
 
 [dependencies]
 monoio = {version = "0.0.9"}
-monoio-rustls-fork-shadow-tls = {version = "0.0.7"}
-rustls-fork-shadow-tls = {version = "0.20", default-features = false}
+monoio-rustls-fork-shadow-tls = {version = "0.0.8-mod.2"}
+rustls-fork-shadow-tls = {version = "0.20.9-mod.2", default-features = false}
 
 anyhow = "1"
 byteorder = "1"

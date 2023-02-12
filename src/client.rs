@@ -545,5 +545,6 @@ fn generate_session_id(hmac: &Hmac, buf: &[u8]) -> [u8; TLS_SESSION_ID_SIZE] {
             HMAC_SIZE,
         )
     }
+    tracing::debug!("ClientHello before sign: {buf:?}, session_id {session_id:?}");
     session_id
 }

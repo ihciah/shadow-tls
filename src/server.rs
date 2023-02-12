@@ -257,7 +257,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         let mut handshake_stream = TcpStream::connect(addr).await?;
         mod_tcp_conn(&mut handshake_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
-
+        tracing::trace!("ClientHello frame {first_client_frame:?}");
         let (res, _) = handshake_stream.write_all(first_client_frame).await;
         res?;
         if !client_hello_pass {
@@ -281,7 +281,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
                 return Ok(());
             }
         };
-        tracing::debug!("ServerRandom extracted: {server_random:?}");
+        tracing::debug!("Client authenticated. ServerRandom extracted: {server_random:?}");
 
         if !support_tls13(&first_server_frame) {
             tracing::error!("TLS 1.3 is not supported, will copy bidirectional");
@@ -780,20 +780,12 @@ async fn copy_by_frame_until_hmac_matches(
     let mut g_buffer = Vec::new();
 
     loop {
-        tracing::debug!("copy_by_frame_until_hmac_matches getting frame");
         let buffer = read_exact_frame_into(&mut read, g_buffer).await?;
-        tracing::debug!("copy_by_frame_until_hmac_matches get a frame: {buffer:?}",);
         if buffer.len() > 9 && buffer[0] == APPLICATION_DATA {
             // check hmac
             let mut tmp_hmac = hmac.to_owned();
             tmp_hmac.update(&buffer[TLS_HMAC_HEADER_SIZE..]);
             let h = tmp_hmac.finalize();
-
-            tracing::debug!(
-                "tmp hmac({:?}) = {h:?}, raw = {:?}",
-                &buffer[TLS_HMAC_HEADER_SIZE..],
-                &buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE]
-            );
 
             if buffer[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE] == h {
                 hmac.update(&buffer[TLS_HMAC_HEADER_SIZE..]);
@@ -829,7 +821,6 @@ async fn copy_by_frame_with_modification(
         monoio::select! {
             // this function can be stopped by a channel when reading.
             _ = &mut stop => {
-                tracing::debug!("copy_by_frame_with_modification recv stop");
                 return Ok(());
             },
             buffer_res = read_exact_frame_into(&mut read, g_buffer) => {
@@ -893,10 +884,11 @@ fn support_tls13(frame: &[u8]) -> bool {
             read_ok!(cursor.skip_by_u16());
             continue;
         }
-        tracing::debug!("found supported_versions extension");
         let ext_len = read_ok!(cursor.read_u16::<BigEndian>());
         let ext_val = read_ok!(cursor.read_u16::<BigEndian>());
-        return ext_len == 2 && ext_val == TLS_13;
+        let use_tls13 = ext_len == 2 && ext_val == TLS_13;
+        tracing::debug!("found supported_versions extension, tls1.3: {use_tls13}");
+        return use_tls13;
     }
     false
 }
