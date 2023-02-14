@@ -17,7 +17,7 @@ use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
 
 use crate::{
     helper_v2::{copy_with_application_data, copy_without_application_data, HashedReadStream},
-    util::{kdf, mod_tcp_conn, prelude::*, verified_relay, xor_slice, Hmac},
+    util::{kdf, mod_tcp_conn, prelude::*, verified_relay, xor_slice, Hmac, V3Mode},
 };
 
 const FAKE_REQUEST_LENGTH_RANGE: (usize, usize) = (16, 64);
@@ -31,7 +31,7 @@ pub struct ShadowTlsClient<LA, TA> {
     tls_names: Arc<TlsNames>,
     password: Arc<String>,
     nodelay: bool,
-    v3: bool,
+    v3: V3Mode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,7 +116,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         tls_ext_config: TlsExtConfig,
         password: String,
         nodelay: bool,
-        v3: bool,
+        v3: V3Mode,
     ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -166,7 +166,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
                     let client = shared.clone();
                     mod_tcp_conn(&mut conn, true, shared.nodelay);
                     monoio::spawn(async move {
-                        let _ = match client.v3 {
+                        let _ = match client.v3.enabled() {
                             false => client.relay_v2(conn).await,
                             true => client.relay_v3(conn).await,
                         };
@@ -220,30 +220,31 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
             .await?;
         tracing::debug!("handshake success");
         let (stream, session) = tls_stream.into_parts();
-        let server_random = stream.authorized();
+        let authorized = stream.authorized();
+        let maybe_srh = stream
+            .state()
+            .as_ref()
+            .map(|s| (s.server_random, s.hmac.to_owned()));
         let stream = stream.into_inner();
 
         // stage2:
-        match server_random {
-            None => {
-                tracing::warn!("traffic hijacked or TLS1.3 is not supported");
-                let tls_stream =
-                    monoio_rustls_fork_shadow_tls::ClientTlsStream::new(stream, session);
-                if let Err(e) = fake_request(tls_stream).await {
-                    bail!("traffic hijacked or TLS1.3 is not supported, fake request fail: {e}");
-                }
-                bail!("traffic hijacked or TLS1.3 is not supported, but fake request success");
+        if maybe_srh.is_none() || !authorized && self.v3.strict() {
+            tracing::warn!("V3 strict enabled: traffic hijacked or TLS1.3 is not supported");
+            let tls_stream = monoio_rustls_fork_shadow_tls::ClientTlsStream::new(stream, session);
+            if let Err(e) = fake_request(tls_stream).await {
+                bail!("traffic hijacked or TLS1.3 is not supported, fake request fail: {e}");
             }
-            Some((sr, hmac_sr)) => {
-                drop(session);
-                tracing::debug!("Authorized, ServerRandom extracted: {sr:?}");
-                let hmac_sr_s = Hmac::new(&self.password, (&sr, b"S"));
-                let hmac_sr_c = Hmac::new(&self.password, (&sr, b"C"));
-
-                verified_relay(in_stream, stream, hmac_sr_c, hmac_sr_s, Some(hmac_sr)).await;
-                Ok(())
-            }
+            bail!("traffic hijacked or TLS1.3 is not supported, but fake request success");
         }
+
+        drop(session);
+        let (sr, hmac_sr) = maybe_srh.unwrap();
+        tracing::debug!("Authorized, ServerRandom extracted: {sr:?}");
+        let hmac_sr_s = Hmac::new(&self.password, (&sr, b"S"));
+        let hmac_sr_c = Hmac::new(&self.password, (&sr, b"C"));
+
+        verified_relay(in_stream, stream, hmac_sr_c, hmac_sr_s, Some(hmac_sr)).await;
+        Ok(())
     }
 
     /// Connect remote, do handshaking and calculate HMAC.
@@ -282,9 +283,16 @@ struct StreamWrapper<S> {
 
     read_buf: Option<Vec<u8>>,
     read_pos: usize,
-    read_server_random: Option<[u8; TLS_RANDOM_SIZE]>,
-    read_hmac_key: Option<(Hmac, Vec<u8>)>,
+
+    read_state: Option<State>,
     read_authorized: bool,
+}
+
+#[derive(Clone)]
+struct State {
+    server_random: [u8; TLS_RANDOM_SIZE],
+    hmac: Hmac,
+    key: Vec<u8>,
 }
 
 impl<S> StreamWrapper<S> {
@@ -295,21 +303,18 @@ impl<S> StreamWrapper<S> {
 
             read_buf: Some(Vec::new()),
             read_pos: 0,
-            read_server_random: None,
-            read_hmac_key: None,
+
+            read_state: None,
             read_authorized: false,
         }
     }
 
-    /// Return None for unauthorized,
-    /// return Some(server_random) for authorized.
-    fn authorized(&self) -> Option<([u8; 32], Hmac)> {
-        if !self.read_authorized {
-            None
-        } else {
-            self.read_server_random
-                .map(|x| (x, self.read_hmac_key.as_ref().unwrap().0.to_owned()))
-        }
+    fn authorized(&self) -> bool {
+        self.read_authorized
+    }
+
+    fn state(&self) -> &Option<State> {
+        &self.read_state
     }
 
     fn into_inner(self) -> S {
@@ -370,16 +375,19 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
                         )
                     }
                     tracing::debug!("ServerRandom extracted: {server_random:?}");
-                    self.read_server_random = Some(server_random);
                     let hmac = Hmac::new(&self.password, (&server_random, &[]));
                     let key = kdf(&self.password, &server_random);
-                    self.read_hmac_key = Some((hmac, key));
+                    self.read_state = Some(State {
+                        server_random,
+                        hmac,
+                        key,
+                    });
                 }
             }
             APPLICATION_DATA => {
                 self.read_authorized = false;
                 if buf.len() > TLS_HMAC_HEADER_SIZE {
-                    if let Some((hmac, key)) = self.read_hmac_key.as_mut() {
+                    if let Some(State { hmac, key, .. }) = self.read_state.as_mut() {
                         hmac.update(&buf[TLS_HMAC_HEADER_SIZE..]);
                         if hmac.finalize() == buf[TLS_HEADER_SIZE..TLS_HMAC_HEADER_SIZE] {
                             xor_slice(&mut buf[TLS_HMAC_HEADER_SIZE..], key);

@@ -39,6 +39,35 @@ pub mod prelude {
     pub const HMAC_SIZE: usize = 4;
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum V3Mode {
+    Disabled,
+    Lossy,
+    Strict,
+}
+
+impl std::fmt::Display for V3Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            V3Mode::Disabled => write!(f, "disabled"),
+            V3Mode::Lossy => write!(f, "enabled(lossy)"),
+            V3Mode::Strict => write!(f, "enabled(strict)"),
+        }
+    }
+}
+
+impl V3Mode {
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        !matches!(self, V3Mode::Disabled)
+    }
+
+    #[inline]
+    pub fn strict(&self) -> bool {
+        matches!(self, V3Mode::Strict)
+    }
+}
+
 pub async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
 where
     R: monoio::io::AsyncReadRent,
@@ -67,6 +96,7 @@ pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
     let _ = conn.set_nodelay(nodelay);
 }
 
+#[derive(Clone)]
 pub struct Hmac(hmac::Hmac<sha1::Sha1>);
 
 impl Hmac {

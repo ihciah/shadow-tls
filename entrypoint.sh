@@ -15,6 +15,11 @@ then
     parameter="$parameter --v3"
 fi
 
+if [ ! -z "$STRICT" ]
+then
+    parameter="$parameter --strict"
+fi
+
 if [ "$MODE" = "server" ]
 then
     parameter="$parameter $MODE"

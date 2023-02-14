@@ -16,6 +16,7 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 use crate::{
     client::{parse_client_names, ShadowTlsClient, TlsExtConfig, TlsNames},
     server::{parse_server_addrs, ShadowTlsServer, TlsAddrs},
+    util::V3Mode,
 };
 
 #[derive(Parser, Debug)]
@@ -40,6 +41,8 @@ struct Opts {
     disable_nodelay: bool,
     #[clap(long, help = "Use v3 protocol")]
     v3: bool,
+    #[clap(long, help = "Strict mode(only for v3 protocol)")]
+    strict: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -104,7 +107,7 @@ enum RunningArgs {
         tls_ext: TlsExtConfig,
         password: String,
         nodelay: bool,
-        v3: bool,
+        v3: V3Mode,
     },
     Server {
         listen_addr: String,
@@ -112,12 +115,18 @@ enum RunningArgs {
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
-        v3: bool,
+        v3: V3Mode,
     },
 }
 
 impl From<Args> for RunningArgs {
     fn from(args: Args) -> Self {
+        let v3 = match (args.opts.v3, args.opts.strict) {
+            (true, true) => V3Mode::Strict,
+            (true, false) => V3Mode::Lossy,
+            (false, _) => V3Mode::Disabled,
+        };
+
         match args.cmd {
             Commands::Client {
                 listen,
@@ -132,7 +141,7 @@ impl From<Args> for RunningArgs {
                 tls_ext: TlsExtConfig::from(alpn),
                 password,
                 nodelay: !args.opts.disable_nodelay,
-                v3: args.opts.v3,
+                v3,
             },
             Commands::Server {
                 listen,
@@ -145,7 +154,7 @@ impl From<Args> for RunningArgs {
                 tls_addr,
                 password,
                 nodelay: !args.opts.disable_nodelay,
-                v3: args.opts.v3,
+                v3,
             },
         }
     }

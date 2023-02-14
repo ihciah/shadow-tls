@@ -26,7 +26,7 @@ use crate::{
     },
     util::{
         copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*, verified_relay,
-        xor_slice, Hmac,
+        xor_slice, Hmac, V3Mode,
     },
 };
 
@@ -38,7 +38,7 @@ pub struct ShadowTlsServer<LA, TA> {
     tls_addr: Arc<TlsAddrs>,
     password: Arc<String>,
     nodelay: bool,
-    v3: bool,
+    v3: V3Mode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -128,7 +128,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
-        v3: bool,
+        v3: V3Mode,
     ) -> Self {
         Self {
             listen_addr: Arc::new(listen_addr),
@@ -158,7 +158,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
                     let server = shared.clone();
                     mod_tcp_conn(&mut conn, true, shared.nodelay);
                     monoio::spawn(async move {
-                        let _ = match server.v3 {
+                        let _ = match server.v3.enabled() {
                             false => server.relay_v2(conn).await,
                             true => server.relay_v3(conn).await,
                         };
@@ -283,8 +283,10 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         };
         tracing::debug!("Client authenticated. ServerRandom extracted: {server_random:?}");
 
-        if !support_tls13(&first_server_frame) {
-            tracing::error!("TLS 1.3 is not supported, will copy bidirectional");
+        if self.v3.strict() && !support_tls13(&first_server_frame) {
+            tracing::error!(
+                "V3 strict enabled and TLS 1.3 is not supported, will copy bidirectional"
+            );
             copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
             return Ok(());
         }

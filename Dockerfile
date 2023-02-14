@@ -16,6 +16,7 @@ ENV PASSWORD=""
 ENV ALPN=""
 ENV DISABLE_NODELAY=""
 ENV V3=""
+ENV STRICT=""
 
 COPY ./entrypoint.sh /
 RUN chmod +x /entrypoint.sh && apk add --no-cache ca-certificates

@@ -26,9 +26,11 @@ In addition, I also mentioned in [this blog](https://www.ihcblog.com/a-better-tl
 4. Keep it simple: only act as a TCP flow proxy, no duplicate wheel building.
 
 ## About support for TLS 1.2
-The V3 protocol only supports handshake servers that use TLS1.3. You can use `openssl s_client -tls1_3 -connect example.com:443` to probe a server for TLS1.3 support.
+The V3 protocol only supports handshake servers using TLS1.3 in strict mode. You can use `openssl s_client -tls1_3 -connect example.com:443` to detect whether a server supports TLS1.3.
 
-To support TLS1.2 would require more awareness of TLS protocol details and would be more complex to implement; given that TLS1.3 is already used by more vendors, we decided to support only TLS1.3.
+If you want to support TLS1.2, you need to perceive more details of the TLS protocol, and the implementation will be more complicated; since TLS1.3 is already used by many manufacturers, we decided to only support TLS1.3 in strict mode.
+
+Considering compatibility and some scenarios that require less protection against connection hijacking (such as using a specific SNI to bypass the billing system), TLS1.2 is allowed in non-strict mode.
 
 # Handshake
 This part of the protocol design is based on [restls](https://github.com/3andne/restls), but there are some differences: it is less aware of the details of TLS and easier to implement.
