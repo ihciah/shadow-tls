@@ -1,11 +1,11 @@
-use std::{ptr::copy_nonoverlapping, time::Duration};
+use std::{io::ErrorKind, net::ToSocketAddrs, ptr::copy_nonoverlapping, time::Duration};
 
 use byteorder::{BigEndian, WriteBytesExt};
 use local_sync::oneshot::{Receiver, Sender};
 use monoio::{
     buf::IoBufMut,
     io::{AsyncReadRent, AsyncWriteRent, AsyncWriteRentExt, Splitable},
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
 };
 
 use hmac::Mac;
@@ -174,6 +174,19 @@ pub async fn verified_relay(
             let _ = tls_write.shutdown().await;
         }
     );
+}
+
+/// Bind with pretty error.
+pub fn bind_with_pretty_error<A: ToSocketAddrs>(addr: A) -> anyhow::Result<TcpListener> {
+    TcpListener::bind(addr).map_err(|e| match e.kind() {
+        ErrorKind::AddrInUse => {
+            anyhow::anyhow!("bind failed, check if the port is used: {e}")
+        }
+        ErrorKind::PermissionDenied => {
+            anyhow::anyhow!("bind failed, check if permission configured correct: {e}")
+        }
+        _ => anyhow::anyhow!("bind failed: {e}"),
+    })
 }
 
 /// Remove application data header, verify hmac, remove the

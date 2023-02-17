@@ -16,7 +16,7 @@ use monoio::{
         AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, PrefixedReadIo,
         Splitable,
     },
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
 };
 
 use crate::{
@@ -25,8 +25,8 @@ use crate::{
         FutureOrOutput, HashedWriteStream, HmacHandler, HMAC_SIZE_V2,
     },
     util::{
-        copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*, verified_relay,
-        xor_slice, Hmac, V3Mode,
+        bind_with_pretty_error, copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*,
+        verified_relay, xor_slice, Hmac, V3Mode,
     },
 };
 
@@ -148,8 +148,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         LA: std::net::ToSocketAddrs + 'static,
         TA: std::net::ToSocketAddrs + 'static,
     {
-        let listener = TcpListener::bind(self.listen_addr.as_ref())
-            .map_err(|e| anyhow::anyhow!("bind failed, check if the port is used: {e}"))?;
+        let listener = bind_with_pretty_error(self.listen_addr.as_ref())?;
         let shared = Rc::new(self);
         loop {
             match listener.accept().await {

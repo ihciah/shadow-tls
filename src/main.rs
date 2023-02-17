@@ -270,7 +270,7 @@ fn main() {
                 .enable_timer()
                 .build()
                 .expect("unable to build monoio runtime(please refer to: https://github.com/ihciah/shadow-tls/wiki/How-to-Run#common-issues)");
-            let _ = rt.block_on(runnable_clone.serve());
+            rt.block_on(runnable_clone.serve())
         });
         threads.push(t);
     }
@@ -278,7 +278,9 @@ fn main() {
         tracing::error!("Unable to register signal handler: {e}");
     }
     threads.into_iter().for_each(|t| {
-        let _ = t.join();
+        if let Err(e) = t.join().expect("couldn't join on the associated thread") {
+            tracing::error!("Thread exit: {e}");
+        }
     });
 }
 

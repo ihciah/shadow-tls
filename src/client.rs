@@ -9,7 +9,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use monoio::{
     buf::IoBufMut,
     io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
 };
 use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rand::{prelude::Distribution, seq::SliceRandom, Rng};
@@ -17,7 +17,10 @@ use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
 
 use crate::{
     helper_v2::{copy_with_application_data, copy_without_application_data, HashedReadStream},
-    util::{kdf, mod_tcp_conn, prelude::*, verified_relay, xor_slice, Hmac, V3Mode},
+    util::{
+        bind_with_pretty_error, kdf, mod_tcp_conn, prelude::*, verified_relay, xor_slice, Hmac,
+        V3Mode,
+    },
 };
 
 const FAKE_REQUEST_LENGTH_RANGE: (usize, usize) = (16, 64);
@@ -156,8 +159,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         LA: std::net::ToSocketAddrs + 'static,
         TA: std::net::ToSocketAddrs + 'static,
     {
-        let listener = TcpListener::bind(self.listen_addr.as_ref())
-            .map_err(|e| anyhow::anyhow!("bind failed, check if the port is used: {e}"))?;
+        let listener = bind_with_pretty_error(self.listen_addr.as_ref())?;
         let shared = Rc::new(self);
         loop {
             match listener.accept().await {
