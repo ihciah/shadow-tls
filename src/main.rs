@@ -1,22 +1,12 @@
-#![allow(stable_features)]
-#![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 
-mod client;
-mod helper_v2;
-mod server;
-mod sip003;
-mod util;
-
-use std::fmt::Display;
+use std::{collections::HashMap, process::exit};
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
-use crate::{
-    client::{parse_client_names, ShadowTlsClient, TlsExtConfig, TlsNames},
-    server::{parse_server_addrs, ShadowTlsServer, TlsAddrs},
-    util::V3Mode,
+use shadow_tls::{
+    sip003::parse_sip003_options, RunningArgs, TlsAddrs, TlsExtConfig, TlsNames, V3Mode,
 };
 
 #[derive(Parser, Debug)]
@@ -99,24 +89,12 @@ enum Commands {
     },
 }
 
-enum RunningArgs {
-    Client {
-        listen_addr: String,
-        target_addr: String,
-        tls_names: TlsNames,
-        tls_ext: TlsExtConfig,
-        password: String,
-        nodelay: bool,
-        v3: V3Mode,
-    },
-    Server {
-        listen_addr: String,
-        target_addr: String,
-        tls_addr: TlsAddrs,
-        password: String,
-        nodelay: bool,
-        v3: V3Mode,
-    },
+fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
+    TlsNames::try_from(addrs)
+}
+
+fn parse_server_addrs(arg: &str) -> anyhow::Result<TlsAddrs> {
+    TlsAddrs::try_from(arg)
 }
 
 impl From<Args> for RunningArgs {
@@ -160,90 +138,83 @@ impl From<Args> for RunningArgs {
     }
 }
 
-impl RunningArgs {
-    fn build(self) -> anyhow::Result<Runnable<String, String>> {
-        match self {
-            RunningArgs::Client {
-                listen_addr,
-                target_addr,
-                tls_names,
-                tls_ext,
-                password,
-                nodelay,
-                v3,
-            } => Ok(Runnable::Client(ShadowTlsClient::new(
-                listen_addr,
-                target_addr,
-                tls_names,
-                tls_ext,
-                password,
-                nodelay,
-                v3,
-            )?)),
-            RunningArgs::Server {
-                listen_addr,
-                target_addr,
-                tls_addr,
-                password,
-                nodelay,
-                v3,
-            } => Ok(Runnable::Server(ShadowTlsServer::new(
-                listen_addr,
-                target_addr,
-                tls_addr,
-                password,
-                nodelay,
-                v3,
-            ))),
-        }
-    }
-}
-
-impl Display for RunningArgs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Client {
-                listen_addr,
-                target_addr,
-                tls_names,
-                tls_ext,
-                nodelay,
-                v3,
-                ..
-            } => {
-                write!(f, "Client with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server names: {tls_names}\nTLS Extension: {tls_ext}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
+// SIP003 [https://shadowsocks.org/en/wiki/Plugin.html](https://shadowsocks.org/en/wiki/Plugin.html)
+pub(crate) fn get_sip003_arg() -> Option<Args> {
+    macro_rules! env {
+        ($key: expr) => {
+            match std::env::var($key).ok() {
+                None => return None,
+                Some(val) if val.is_empty() => return None,
+                Some(val) => val,
             }
-            Self::Server {
-                listen_addr,
-                target_addr,
-                tls_addr,
-                nodelay,
-                v3,
-                ..
-            } => {
-                write!(f, "Server with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server address: {tls_addr}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
+        };
+        ($key: expr, $fail_fn: expr) => {
+            match std::env::var($key).ok() {
+                None => return None,
+                Some(val) if val.is_empty() => {
+                    $fail_fn();
+                    return None;
+                }
+                Some(val) => val,
             }
-        }
+        };
     }
-}
 
-#[derive(Clone)]
-enum Runnable<A, B> {
-    Client(ShadowTlsClient<A, B>),
-    Server(ShadowTlsServer<A, B>),
-}
+    let ss_remote_host = env!("SS_REMOTE_HOST");
+    let ss_remote_port = env!("SS_REMOTE_PORT");
+    let ss_local_host = env!("SS_LOCAL_HOST");
+    let ss_local_port = env!("SS_LOCAL_PORT");
+    let ss_plugin_options = env!("SS_PLUGIN_OPTIONS", || {
+        tracing::error!("need SS_PLUGIN_OPTIONS when as SIP003 plugin");
+        exit(-1);
+    });
 
-impl<A, B> Runnable<A, B>
-where
-    A: std::net::ToSocketAddrs + 'static,
-    B: std::net::ToSocketAddrs + 'static,
-{
-    async fn serve(self) -> anyhow::Result<()> {
-        match self {
-            Runnable::Client(c) => c.serve().await,
-            Runnable::Server(s) => s.serve().await,
+    let opts = parse_sip003_options(&ss_plugin_options).unwrap();
+    let opts: HashMap<_, _> = opts.into_iter().collect();
+
+    let threads = opts.get("threads").map(|s| s.parse::<u8>().unwrap());
+    let v3 = opts.get("v3").is_some();
+    let passwd = opts
+        .get("passwd")
+        .expect("need passwd param(like passwd=123456)");
+
+    let args_opts = crate::Opts {
+        threads,
+        v3,
+        ..Default::default()
+    };
+    let args = if opts.get("server").is_some() {
+        let tls_addr = opts
+            .get("tls")
+            .expect("tls param must be specified(like tls=xxx.com:443)");
+        let tls_addrs = parse_server_addrs(tls_addr)
+            .expect("tls param parse failed(like tls=xxx.com:443 or tls=yyy.com:1.2.3.4:443;zzz.com:443;xxx.com)");
+        Args {
+            cmd: crate::Commands::Server {
+                listen: format!("{ss_remote_host}:{ss_remote_port}"),
+                server_addr: format!("{ss_local_host}:{ss_local_port}"),
+                tls_addr: tls_addrs,
+                password: passwd.to_owned(),
+            },
+            opts: args_opts,
         }
-    }
+    } else {
+        let host = opts
+            .get("host")
+            .expect("need host param(like host=www.baidu.com)");
+        let hosts = parse_client_names(host).expect("tls names parse failed");
+        Args {
+            cmd: crate::Commands::Client {
+                listen: format!("{ss_local_host}:{ss_local_port}"),
+                server_addr: format!("{ss_remote_host}:{ss_remote_port}"),
+                tls_names: hosts,
+                password: passwd.to_owned(),
+                alpn: Default::default(),
+            },
+            opts: args_opts,
+        }
+    };
+    Some(args)
 }
 
 fn main() {
@@ -256,28 +227,15 @@ fn main() {
                 .add_directive("rustls=off".parse().unwrap()),
         )
         .init();
-    let args = sip003::get_sip003_arg().unwrap_or_else(Args::parse);
+    let args = get_sip003_arg().unwrap_or_else(Args::parse);
     let parallelism = get_parallelism(&args);
     let running_args = RunningArgs::from(args);
     tracing::info!("Start {parallelism}-thread {running_args}");
-
-    let runnable = running_args.build().expect("unable to build runnable");
-    let mut threads = Vec::new();
-    for _ in 0..parallelism {
-        let runnable_clone = runnable.clone();
-        let t = std::thread::spawn(move || {
-            let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-                .enable_timer()
-                .build()
-                .expect("unable to build monoio runtime(please refer to: https://github.com/ihciah/shadow-tls/wiki/How-to-Run#common-issues)");
-            rt.block_on(runnable_clone.serve())
-        });
-        threads.push(t);
-    }
     if let Err(e) = ctrlc::set_handler(|| std::process::exit(0)) {
         tracing::error!("Unable to register signal handler: {e}");
     }
-    threads.into_iter().for_each(|t| {
+    let runnable = running_args.build().expect("unable to build runnable");
+    runnable.start(parallelism).into_iter().for_each(|t| {
         if let Err(e) = t.join().expect("couldn't join on the associated thread") {
             tracing::error!("Thread exit: {e}");
         }

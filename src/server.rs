@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::VecDeque,
-    io::Read,
     ptr::{copy, copy_nonoverlapping},
     rc::Rc,
     sync::Arc,
@@ -26,7 +25,7 @@ use crate::{
     },
     util::{
         bind_with_pretty_error, copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*,
-        verified_relay, xor_slice, Hmac, V3Mode,
+        support_tls13, verified_relay, xor_slice, CursorExt, Hmac, V3Mode,
     },
 };
 
@@ -106,10 +105,6 @@ impl TryFrom<&str> for TlsAddrs {
         }
         Ok(TlsAddrs { dispatch, fallback })
     }
-}
-
-pub fn parse_server_addrs(arg: &str) -> anyhow::Result<TlsAddrs> {
-    TlsAddrs::try_from(arg)
 }
 
 impl std::fmt::Display for TlsAddrs {
@@ -282,7 +277,8 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         };
         tracing::debug!("Client authenticated. ServerRandom extracted: {server_random:?}");
 
-        if self.v3.strict() && !support_tls13(&first_server_frame) {
+        let use_tls13 = support_tls13(&first_server_frame);
+        if self.v3.strict() && !use_tls13 {
             tracing::error!(
                 "V3 strict enabled and TLS 1.3 is not supported, will copy bidirectional"
             );
@@ -341,7 +337,15 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         mod_tcp_conn(&mut data_stream, true, self.nodelay);
         let (res, _) = data_stream.write_all(pure_data).await;
         res?;
-        verified_relay(data_stream, in_stream, hmac_sr_s, hmac_sr_c, None).await;
+        verified_relay(
+            data_stream,
+            in_stream,
+            hmac_sr_s,
+            hmac_sr_c,
+            None,
+            !use_tls13,
+        )
+        .await;
         Ok(())
     }
 }
@@ -855,88 +859,6 @@ async fn copy_by_frame_with_modification(
     }
 }
 
-/// Parse ServerHello and return if tls1.3 is supported.
-fn support_tls13(frame: &[u8]) -> bool {
-    if frame.len() < SESSION_ID_LEN_IDX {
-        return false;
-    }
-    let mut cursor = std::io::Cursor::new(&frame[SESSION_ID_LEN_IDX..]);
-    macro_rules! read_ok {
-        ($res: expr) => {
-            match $res {
-                Ok(r) => r,
-                Err(_) => {
-                    return false;
-                }
-            }
-        };
-    }
-
-    // skip session id
-    read_ok!(cursor.skip_by_u8());
-    // skip cipher suites
-    read_ok!(cursor.skip(3));
-    // skip ext length
-    let cnt = read_ok!(cursor.read_u16::<BigEndian>());
-
-    for _ in 0..cnt {
-        let ext_type = read_ok!(cursor.read_u16::<BigEndian>());
-        if ext_type != SUPPORTED_VERSIONS_TYPE {
-            read_ok!(cursor.skip_by_u16());
-            continue;
-        }
-        let ext_len = read_ok!(cursor.read_u16::<BigEndian>());
-        let ext_val = read_ok!(cursor.read_u16::<BigEndian>());
-        let use_tls13 = ext_len == 2 && ext_val == TLS_13;
-        tracing::debug!("found supported_versions extension, tls1.3: {use_tls13}");
-        return use_tls13;
-    }
-    false
-}
-
-/// A helper trait for fast read and skip.
-trait CursorExt {
-    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>>;
-    fn skip(&mut self, n: usize) -> std::io::Result<()>;
-    fn skip_by_u8(&mut self) -> std::io::Result<u8>;
-    fn skip_by_u16(&mut self) -> std::io::Result<u16>;
-}
-
-impl<T> CursorExt for std::io::Cursor<T>
-where
-    std::io::Cursor<T>: std::io::Read,
-{
-    #[inline]
-    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>> {
-        let len = self.read_u16::<BigEndian>()?;
-        let mut buf = vec![0; len as usize];
-        self.read_exact(&mut buf)?;
-        Ok(buf)
-    }
-
-    #[inline]
-    fn skip(&mut self, n: usize) -> std::io::Result<()> {
-        for _ in 0..n {
-            self.read_u8()?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn skip_by_u8(&mut self) -> std::io::Result<u8> {
-        let len = self.read_u8()?;
-        self.skip(len as usize)?;
-        Ok(len)
-    }
-
-    #[inline]
-    fn skip_by_u16(&mut self) -> std::io::Result<u16> {
-        let len = self.read_u16::<BigEndian>()?;
-        self.skip(len as usize)?;
-        Ok(len)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,14 +884,14 @@ mod tests {
     #[test]
     fn parse_tls_addrs() {
         assert_eq!(
-            parse_server_addrs("google.com").unwrap(),
+            TlsAddrs::try_from("google.com").unwrap(),
             TlsAddrs {
                 dispatch: map![],
                 fallback: s!("google.com:443")
             }
         );
         assert_eq!(
-            parse_server_addrs("feishu.cn;cloudflare.com:1.1.1.1:80;google.com").unwrap(),
+            TlsAddrs::try_from("feishu.cn;cloudflare.com:1.1.1.1:80;google.com").unwrap(),
             TlsAddrs {
                 dispatch: map![
                     "feishu.cn" => "feishu.cn:443",
@@ -979,7 +901,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_server_addrs("captive.apple.com;feishu.cn:80").unwrap(),
+            TlsAddrs::try_from("captive.apple.com;feishu.cn:80").unwrap(),
             TlsAddrs {
                 dispatch: map![
                     "captive.apple.com" => "captive.apple.com:443",

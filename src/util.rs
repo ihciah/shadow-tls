@@ -1,6 +1,11 @@
-use std::{io::ErrorKind, net::ToSocketAddrs, ptr::copy_nonoverlapping, time::Duration};
+use std::{
+    io::{ErrorKind, Read},
+    net::ToSocketAddrs,
+    ptr::copy_nonoverlapping,
+    time::Duration,
+};
 
-use byteorder::{BigEndian, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use local_sync::oneshot::{Receiver, Sender};
 use monoio::{
     buf::IoBufMut,
@@ -14,29 +19,29 @@ use sha2::{Digest, Sha256};
 
 use prelude::*;
 
-pub mod prelude {
-    pub const TLS_MAJOR: u8 = 0x03;
-    pub const TLS_MINOR: (u8, u8) = (0x03, 0x01);
-    pub const SNI_EXT_TYPE: u16 = 0;
-    pub const SUPPORTED_VERSIONS_TYPE: u16 = 43;
-    pub const TLS_RANDOM_SIZE: usize = 32;
-    pub const TLS_HEADER_SIZE: usize = 5;
-    pub const TLS_SESSION_ID_SIZE: usize = 32;
-    pub const TLS_13: u16 = 0x0304;
+pub(crate) mod prelude {
+    pub(crate) const TLS_MAJOR: u8 = 0x03;
+    pub(crate) const TLS_MINOR: (u8, u8) = (0x03, 0x01);
+    pub(crate) const SNI_EXT_TYPE: u16 = 0;
+    pub(crate) const SUPPORTED_VERSIONS_TYPE: u16 = 43;
+    pub(crate) const TLS_RANDOM_SIZE: usize = 32;
+    pub(crate) const TLS_HEADER_SIZE: usize = 5;
+    pub(crate) const TLS_SESSION_ID_SIZE: usize = 32;
+    pub(crate) const TLS_13: u16 = 0x0304;
 
-    pub const CLIENT_HELLO: u8 = 0x01;
-    pub const SERVER_HELLO: u8 = 0x02;
-    pub const ALERT: u8 = 0x15;
-    pub const HANDSHAKE: u8 = 0x16;
-    pub const APPLICATION_DATA: u8 = 0x17;
-    pub const CHANGE_CIPHER_SPEC: u8 = 0x14;
+    pub(crate) const CLIENT_HELLO: u8 = 0x01;
+    pub(crate) const SERVER_HELLO: u8 = 0x02;
+    pub(crate) const ALERT: u8 = 0x15;
+    pub(crate) const HANDSHAKE: u8 = 0x16;
+    pub(crate) const APPLICATION_DATA: u8 = 0x17;
+    pub(crate) const CHANGE_CIPHER_SPEC: u8 = 0x14;
 
-    pub const SERVER_RANDOM_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2;
-    pub const SESSION_ID_LEN_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2 + TLS_RANDOM_SIZE;
-    pub const TLS_HMAC_HEADER_SIZE: usize = TLS_HEADER_SIZE + HMAC_SIZE;
+    pub(crate) const SERVER_RANDOM_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2;
+    pub(crate) const SESSION_ID_LEN_IDX: usize = TLS_HEADER_SIZE + 1 + 3 + 2 + TLS_RANDOM_SIZE;
+    pub(crate) const TLS_HMAC_HEADER_SIZE: usize = TLS_HEADER_SIZE + HMAC_SIZE;
 
-    pub const COPY_BUF_SIZE: usize = 4096;
-    pub const HMAC_SIZE: usize = 4;
+    pub(crate) const COPY_BUF_SIZE: usize = 4096;
+    pub(crate) const HMAC_SIZE: usize = 4;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -68,7 +73,7 @@ impl V3Mode {
     }
 }
 
-pub async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
+pub(crate) async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
 where
     R: monoio::io::AsyncReadRent,
     W: monoio::io::AsyncWriteRent,
@@ -79,13 +84,13 @@ where
     Ok(())
 }
 
-pub async fn copy_bidirectional(l: &mut TcpStream, r: &mut TcpStream) {
+pub(crate) async fn copy_bidirectional(l: &mut TcpStream, r: &mut TcpStream) {
     let (lr, lw) = l.split();
     let (rr, rw) = r.split();
     let _ = monoio::join!(copy_until_eof(lr, rw), copy_until_eof(rr, lw));
 }
 
-pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
+pub(crate) fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
     if keepalive {
         let _ = conn.set_tcp_keepalive(
             Some(Duration::from_secs(90)),
@@ -97,11 +102,11 @@ pub fn mod_tcp_conn(conn: &mut TcpStream, keepalive: bool, nodelay: bool) {
 }
 
 #[derive(Clone)]
-pub struct Hmac(hmac::Hmac<sha1::Sha1>);
+pub(crate) struct Hmac(hmac::Hmac<sha1::Sha1>);
 
 impl Hmac {
     #[inline]
-    pub fn new(password: &str, init_data: (&[u8], &[u8])) -> Self {
+    pub(crate) fn new(password: &str, init_data: (&[u8], &[u8])) -> Self {
         // Note: infact new_from_slice never returns Err.
         let mut hmac: hmac::Hmac<sha1::Sha1> =
             hmac::Hmac::new_from_slice(password.as_bytes()).expect("unable to build hmac instance");
@@ -111,12 +116,12 @@ impl Hmac {
     }
 
     #[inline]
-    pub fn update(&mut self, data: &[u8]) {
+    pub(crate) fn update(&mut self, data: &[u8]) {
         self.0.update(data);
     }
 
     #[inline]
-    pub fn finalize(&self) -> [u8; HMAC_SIZE] {
+    pub(crate) fn finalize(&self) -> [u8; HMAC_SIZE] {
         let hmac = self.0.clone();
         let hash = hmac.finalize().into_bytes();
         let mut res = [0; HMAC_SIZE];
@@ -125,20 +130,20 @@ impl Hmac {
     }
 
     #[inline]
-    pub fn to_owned(&self) -> Self {
+    pub(crate) fn to_owned(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
 #[inline]
-pub fn xor_slice(data: &mut [u8], key: &[u8]) {
+pub(crate) fn xor_slice(data: &mut [u8], key: &[u8]) {
     data.iter_mut()
         .zip(key.iter().cycle())
         .for_each(|(d, k)| *d ^= k);
 }
 
 #[inline]
-pub fn kdf(password: &str, server_random: &[u8]) -> Vec<u8> {
+pub(crate) fn kdf(password: &str, server_random: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
     hasher.update(server_random);
@@ -146,12 +151,13 @@ pub fn kdf(password: &str, server_random: &[u8]) -> Vec<u8> {
     hash.to_vec()
 }
 
-pub async fn verified_relay(
+pub(crate) async fn verified_relay(
     mut raw: TcpStream,
     mut tls: TcpStream,
     mut hmac_add: Hmac,
     mut hmac_verify: Hmac,
     mut hmac_ignore: Option<Hmac>,
+    alert_enabled: bool,
 ) {
     tracing::debug!("verified relay started");
     let (mut tls_read, mut tls_write) = tls.split();
@@ -170,14 +176,21 @@ pub async fn verified_relay(
             let _ = raw_write.shutdown().await;
         },
         async {
-            copy_add_appdata(&mut raw_read, &mut tls_write, &mut hmac_add, &mut notfied).await;
+            copy_add_appdata(
+                &mut raw_read,
+                &mut tls_write,
+                &mut hmac_add,
+                &mut notfied,
+                alert_enabled,
+            )
+            .await;
             let _ = tls_write.shutdown().await;
         }
     );
 }
 
 /// Bind with pretty error.
-pub fn bind_with_pretty_error<A: ToSocketAddrs>(addr: A) -> anyhow::Result<TcpListener> {
+pub(crate) fn bind_with_pretty_error<A: ToSocketAddrs>(addr: A) -> anyhow::Result<TcpListener> {
     TcpListener::bind(addr).map_err(|e| match e.kind() {
         ErrorKind::AddrInUse => {
             anyhow::anyhow!("bind failed, check if the port is used: {e}")
@@ -267,6 +280,7 @@ async fn copy_add_appdata(
     mut write: impl AsyncWriteRent,
     hmac: &mut Hmac,
     alert_notified: &mut Sender<()>,
+    alert_enabled: bool,
 ) {
     const DEFAULT_DATA: [u8; TLS_HMAC_HEADER_SIZE] =
         [APPLICATION_DATA, TLS_MAJOR, TLS_MINOR.0, 0, 0, 0, 0, 0, 0];
@@ -280,12 +294,12 @@ async fn copy_add_appdata(
     loop {
         monoio::select! {
             _ = &mut alert_notified => {
-                send_alert(&mut write).await;
+                send_alert(&mut write, alert_enabled).await;
                 return;
             },
             (res, buf) = read.read(buffer.slice_mut(TLS_HMAC_HEADER_SIZE..)) => {
                 if matches!(res, Ok(0) | Err(_)) {
-                    send_alert(&mut write).await;
+                    send_alert(&mut write, alert_enabled).await;
                     return;
                 }
                 buffer = buf.into_inner();
@@ -322,7 +336,10 @@ fn verify_appdata(frame: &[u8], hmac: &mut Hmac, sep: bool) -> bool {
     frame[TLS_HEADER_SIZE..TLS_HEADER_SIZE + HMAC_SIZE] == hmac_real
 }
 
-async fn send_alert(mut w: impl AsyncWriteRent) {
+async fn send_alert(mut w: impl AsyncWriteRent, alert_enabled: bool) {
+    if !alert_enabled {
+        return;
+    }
     const FULL_SIZE: u8 = 31;
     const HEADER: [u8; TLS_HEADER_SIZE] = [
         ALERT,
@@ -337,6 +354,88 @@ async fn send_alert(mut w: impl AsyncWriteRent) {
     rand::thread_rng().fill(&mut buf[HEADER.len()..]);
 
     let _ = w.write_all(buf).await;
+}
+
+/// Parse ServerHello and return if tls1.3 is supported.
+pub(crate) fn support_tls13(frame: &[u8]) -> bool {
+    if frame.len() < SESSION_ID_LEN_IDX {
+        return false;
+    }
+    let mut cursor = std::io::Cursor::new(&frame[SESSION_ID_LEN_IDX..]);
+    macro_rules! read_ok {
+        ($res: expr) => {
+            match $res {
+                Ok(r) => r,
+                Err(_) => {
+                    return false;
+                }
+            }
+        };
+    }
+
+    // skip session id
+    read_ok!(cursor.skip_by_u8());
+    // skip cipher suites
+    read_ok!(cursor.skip(3));
+    // skip ext length
+    let cnt = read_ok!(cursor.read_u16::<BigEndian>());
+
+    for _ in 0..cnt {
+        let ext_type = read_ok!(cursor.read_u16::<BigEndian>());
+        if ext_type != SUPPORTED_VERSIONS_TYPE {
+            read_ok!(cursor.skip_by_u16());
+            continue;
+        }
+        let ext_len = read_ok!(cursor.read_u16::<BigEndian>());
+        let ext_val = read_ok!(cursor.read_u16::<BigEndian>());
+        let use_tls13 = ext_len == 2 && ext_val == TLS_13;
+        tracing::debug!("found supported_versions extension, tls1.3: {use_tls13}");
+        return use_tls13;
+    }
+    false
+}
+
+/// A helper trait for fast read and skip.
+pub(crate) trait CursorExt {
+    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>>;
+    fn skip(&mut self, n: usize) -> std::io::Result<()>;
+    fn skip_by_u8(&mut self) -> std::io::Result<u8>;
+    fn skip_by_u16(&mut self) -> std::io::Result<u16>;
+}
+
+impl<T> CursorExt for std::io::Cursor<T>
+where
+    std::io::Cursor<T>: std::io::Read,
+{
+    #[inline]
+    fn read_by_u16(&mut self) -> std::io::Result<Vec<u8>> {
+        let len = self.read_u16::<BigEndian>()?;
+        let mut buf = vec![0; len as usize];
+        self.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    #[inline]
+    fn skip(&mut self, n: usize) -> std::io::Result<()> {
+        for _ in 0..n {
+            self.read_u8()?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn skip_by_u8(&mut self) -> std::io::Result<u8> {
+        let len = self.read_u8()?;
+        self.skip(len as usize)?;
+        Ok(len)
+    }
+
+    #[inline]
+    fn skip_by_u16(&mut self) -> std::io::Result<u16> {
+        let len = self.read_u16::<BigEndian>()?;
+        self.skip(len as usize)?;
+        Ok(len)
+    }
 }
 
 trait ReadExt {

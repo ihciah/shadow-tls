@@ -18,8 +18,8 @@ use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
 use crate::{
     helper_v2::{copy_with_application_data, copy_without_application_data, HashedReadStream},
     util::{
-        bind_with_pretty_error, kdf, mod_tcp_conn, prelude::*, verified_relay, xor_slice, Hmac,
-        V3Mode,
+        bind_with_pretty_error, kdf, mod_tcp_conn, prelude::*, support_tls13, verified_relay,
+        xor_slice, Hmac, V3Mode,
     },
 };
 
@@ -41,6 +41,7 @@ pub struct ShadowTlsClient<LA, TA> {
 pub struct TlsNames(Vec<ServerName>);
 
 impl TlsNames {
+    #[inline]
     pub fn random_choose(&self) -> &ServerName {
         self.0.choose(&mut rand::thread_rng()).unwrap()
     }
@@ -68,10 +69,6 @@ impl std::fmt::Display for TlsNames {
     }
 }
 
-pub fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
-    TlsNames::try_from(addrs)
-}
-
 #[derive(Default, Debug)]
 pub struct TlsExtConfig {
     alpn: Option<Vec<Vec<u8>>>,
@@ -79,6 +76,7 @@ pub struct TlsExtConfig {
 
 impl TlsExtConfig {
     #[allow(unused)]
+    #[inline]
     pub fn new(alpn: Option<Vec<Vec<u8>>>) -> TlsExtConfig {
         TlsExtConfig { alpn }
     }
@@ -223,6 +221,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         tracing::debug!("handshake success");
         let (stream, session) = tls_stream.into_parts();
         let authorized = stream.authorized();
+        let tls13 = stream.tls13;
         let maybe_srh = stream
             .state()
             .as_ref()
@@ -245,7 +244,15 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         let hmac_sr_s = Hmac::new(&self.password, (&sr, b"S"));
         let hmac_sr_c = Hmac::new(&self.password, (&sr, b"C"));
 
-        verified_relay(in_stream, stream, hmac_sr_c, hmac_sr_s, Some(hmac_sr)).await;
+        verified_relay(
+            in_stream,
+            stream,
+            hmac_sr_c,
+            hmac_sr_s,
+            Some(hmac_sr),
+            !tls13,
+        )
+        .await;
         Ok(())
     }
 
@@ -288,6 +295,7 @@ struct StreamWrapper<S> {
 
     read_state: Option<State>,
     read_authorized: bool,
+    tls13: bool,
 }
 
 #[derive(Clone)]
@@ -308,6 +316,7 @@ impl<S> StreamWrapper<S> {
 
             read_state: None,
             read_authorized: false,
+            tls13: false,
         }
     }
 
@@ -384,6 +393,7 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
                         hmac,
                         key,
                     });
+                    self.tls13 = support_tls13(&buf);
                 }
             }
             APPLICATION_DATA => {

@@ -23,13 +23,13 @@ use monoio::{
 
 use crate::util::prelude::*;
 
-pub const HMAC_SIZE_V2: usize = 8;
+pub(crate) const HMAC_SIZE_V2: usize = 8;
 
-pub trait HashedStream {
+pub(crate) trait HashedStream {
     fn hash_stream(&self) -> [u8; 20];
 }
 
-pub struct HashedReadStream<S> {
+pub(crate) struct HashedReadStream<S> {
     raw: S,
     hmac: hmac::Hmac<sha1::Sha1>,
 }
@@ -39,18 +39,18 @@ pub struct HashedReadStream<S> {
 unsafe impl<S: monoio::io::Split> monoio::io::Split for HashedReadStream<S> {}
 
 impl<S> HashedReadStream<S> {
-    pub fn new(raw: S, password: &[u8]) -> Result<Self, hmac::digest::InvalidLength> {
+    pub(crate) fn new(raw: S, password: &[u8]) -> Result<Self, hmac::digest::InvalidLength> {
         Ok(Self {
             raw,
             hmac: hmac::Hmac::new_from_slice(password)?,
         })
     }
 
-    pub fn into_inner(self) -> S {
+    pub(crate) fn into_inner(self) -> S {
         self.raw
     }
 
-    pub fn hash(&self) -> [u8; 20] {
+    pub(crate) fn hash(&self) -> [u8; 20] {
         self.hmac
             .clone()
             .finalize()
@@ -90,18 +90,18 @@ impl<S: AsWriteFd> AsWriteFd for HashedWriteStream<S> {
 }
 
 impl<S> HashedWriteStream<S> {
-    pub fn new(raw: S, password: &[u8]) -> Result<Self, hmac::digest::InvalidLength> {
+    pub(crate) fn new(raw: S, password: &[u8]) -> Result<Self, hmac::digest::InvalidLength> {
         Ok(Self {
             raw,
             hmac: Rc::new(RefCell::new((true, hmac::Hmac::new_from_slice(password)?))),
         })
     }
 
-    pub fn into_inner(self) -> S {
+    pub(crate) fn into_inner(self) -> S {
         self.raw
     }
 
-    pub fn hash(&self) -> [u8; 20] {
+    pub(crate) fn hash(&self) -> [u8; 20] {
         self.hmac
             .borrow()
             .clone()
@@ -113,15 +113,15 @@ impl<S> HashedWriteStream<S> {
             .expect("unexpected digest length")
     }
 
-    pub fn hmac_handler(&self) -> HmacHandler {
+    pub(crate) fn hmac_handler(&self) -> HmacHandler {
         HmacHandler(self.hmac.clone())
     }
 }
 
-pub struct HmacHandler(Rc<RefCell<(bool, hmac::Hmac<sha1::Sha1>)>>);
+pub(crate) struct HmacHandler(Rc<RefCell<(bool, hmac::Hmac<sha1::Sha1>)>>);
 
 impl HmacHandler {
-    pub fn hash(&self) -> [u8; 20] {
+    pub(crate) fn hash(&self) -> [u8; 20] {
         self.0
             .borrow()
             .clone()
@@ -133,7 +133,7 @@ impl HmacHandler {
             .expect("unexpected digest length")
     }
 
-    pub fn disable(&mut self) {
+    pub(crate) fn disable(&mut self) {
         self.0.borrow_mut().0 = false;
     }
 }
@@ -278,7 +278,7 @@ impl<S: AsyncWriteRent> AsyncWriteRent for HashedWriteStream<S> {
 /// from handshake server even when client side
 /// finished switching. Client must be able to filter
 /// out these packets.
-pub struct SessionFilterStream<C, S> {
+pub(crate) struct SessionFilterStream<C, S> {
     session: C,
     stream: S,
     direct: bool,
@@ -286,7 +286,7 @@ pub struct SessionFilterStream<C, S> {
 }
 
 impl<C, S> SessionFilterStream<C, S> {
-    pub fn new(session: C, stream: S) -> Self {
+    pub(crate) fn new(session: C, stream: S) -> Self {
         Self {
             session,
             stream,
@@ -400,7 +400,7 @@ pin_project_lite::pin_project! {
     /// ErrGroup works like ErrGroup in golang.
     /// If the two futures all finished with Ok, self is finished with Ok.
     /// If any one of them finished with Err, self is finished with Err.
-    pub struct ErrGroup<FA, FB, A, B, E> {
+    pub(crate) struct ErrGroup<FA, FB, A, B, E> {
         #[pin]
         future_a: FA,
         #[pin]
@@ -416,7 +416,7 @@ where
     FA: Future<Output = Result<A, E>>,
     FB: Future<Output = Result<B, E>>,
 {
-    pub fn new(future_a: FA, future_b: FB) -> Self {
+    pub(crate) fn new(future_a: FA, future_b: FB) -> Self {
         Self {
             future_a,
             future_b,
@@ -464,7 +464,7 @@ where
 
 pin_project_lite::pin_project! {
     /// FirstRetGroup returns if the first future is ready.
-    pub struct FirstRetGroup<FA, FB, B, E> {
+    pub(crate) struct FirstRetGroup<FA, FB, B, E> {
         #[pin]
         future_a: FA,
         #[pin]
@@ -474,7 +474,7 @@ pin_project_lite::pin_project! {
     }
 }
 
-pub enum FutureOrOutput<F, R, E>
+pub(crate) enum FutureOrOutput<F, R, E>
 where
     F: Future<Output = Result<R, E>>,
 {
@@ -487,7 +487,7 @@ where
     FA: Future<Output = Result<A, E>>,
     FB: Future<Output = Result<B, E>>,
 {
-    pub fn new(future_a: FA, future_b: FB) -> Self {
+    pub(crate) fn new(future_a: FA, future_b: FB) -> Self {
         Self {
             future_a,
             future_b: Some(future_b),
@@ -526,7 +526,7 @@ where
     }
 }
 
-pub async fn copy_with_application_data<'a, const N: usize, R, W>(
+pub(crate) async fn copy_with_application_data<'a, const N: usize, R, W>(
     reader: &'a mut R,
     writer: &'a mut W,
     write_prefix: Option<[u8; N]>,
@@ -601,7 +601,7 @@ where
     Ok(transfered)
 }
 
-pub async fn copy_without_application_data<'a, R, W>(
+pub(crate) async fn copy_without_application_data<'a, R, W>(
     reader: &'a mut R,
     writer: &'a mut W,
 ) -> std::io::Result<u64>
