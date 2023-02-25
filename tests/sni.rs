@@ -1,9 +1,15 @@
 use std::time::Duration;
 
-use monoio::net::TcpStream;
+use monoio::{
+    io::{AsyncReadRentExt, AsyncWriteRentExt},
+    net::TcpStream,
+};
 use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
 use shadow_tls::{RunningArgs, TlsAddrs, V3Mode};
+
+const FEISHU_HTTP_REQUEST: &[u8; 48] = b"GET / HTTP/1.1\r\nHost: feishu.cn\r\nAccept: */*\r\n\r\n";
+const FEISHU_CN_HTTP_RESP: &[u8; 30] = b"HTTP/1.1 301 Moved Permanently";
 
 #[monoio::test(enable_timer = true)]
 async fn sni() {
@@ -24,7 +30,7 @@ async fn sni() {
 
     // run server
     let server = RunningArgs::Server {
-        listen_addr: "127.0.0.1:20012".to_string(),
+        listen_addr: "127.0.0.1:32000".to_string(),
         target_addr: "t.cn:80".to_string(),
         tls_addr: TlsAddrs::try_from("feishu.cn").unwrap(),
         password: "test".to_string(),
@@ -35,14 +41,25 @@ async fn sni() {
     monoio::time::sleep(Duration::from_secs(1)).await;
 
     // connect and handshake
-    assert!(tls_connector
+    let mut feishu_conn = tls_connector
         .connect(
             ServerName::try_from("feishu.cn").unwrap(),
-            TcpStream::connect("127.0.0.1:20012").await.unwrap()
+            TcpStream::connect("127.0.0.1:32000").await.unwrap(),
         )
         .await
-        .is_ok());
-    let conn = TcpStream::connect("127.0.0.1:20012").await.unwrap();
+        .expect("unable to connect feishu.cn");
+    feishu_conn
+        .write_all(FEISHU_HTTP_REQUEST.to_vec())
+        .await
+        .0
+        .unwrap();
+    let (res, buf) = feishu_conn
+        .read_exact(vec![0; FEISHU_CN_HTTP_RESP.len()])
+        .await;
+    assert!(res.is_ok());
+    assert_eq!(&buf, FEISHU_CN_HTTP_RESP);
+
+    let conn = TcpStream::connect("127.0.0.1:32000").await.unwrap();
     assert!(tls_connector
         .connect(ServerName::try_from("t.cn").unwrap(), conn)
         .await

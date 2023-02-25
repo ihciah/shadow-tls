@@ -33,3 +33,19 @@ pub fn test_ok(
     conn.read_exact(&mut buf).unwrap();
     assert_eq!(&buf, http_response);
 }
+
+pub fn test_hijack(client: RunningArgs) {
+    let client_listen = match &client {
+        RunningArgs::Client { listen_addr, .. } => listen_addr.clone(),
+        RunningArgs::Server { .. } => panic!("not valid client args"),
+    };
+    client.build().expect("build client failed").start(1);
+
+    // sleep 1s to make sure client and server have started
+    std::thread::sleep(Duration::from_secs(1));
+    let mut conn = TcpStream::connect(client_listen).unwrap();
+    conn.write_all(b"dummy").unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let mut dummy_buf = [0; 1];
+    assert!(!matches!(conn.read(&mut dummy_buf), Ok(1)));
+}

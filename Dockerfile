@@ -3,7 +3,7 @@ WORKDIR /usr/src/shadow-tls
 RUN apk add --no-cache musl-dev libressl-dev
 
 COPY . .
-RUN RUSTFLAGS="" cargo build --bin shadow-tls --release
+RUN CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse RUSTFLAGS="" cargo build --bin shadow-tls --release
 
 FROM alpine:latest
 

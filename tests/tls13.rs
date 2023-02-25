@@ -9,8 +9,8 @@ use utils::*;
 #[test]
 fn tls13_v2() {
     let client = RunningArgs::Client {
-        listen_addr: "127.0.0.1:20006".to_string(),
-        target_addr: "127.0.0.1:20007".to_string(),
+        listen_addr: "127.0.0.1:31000".to_string(),
+        target_addr: "127.0.0.1:31001".to_string(),
         tls_names: TlsNames::try_from("feishu.cn").unwrap(),
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
@@ -18,7 +18,7 @@ fn tls13_v2() {
         v3: V3Mode::Disabled,
     };
     let server = RunningArgs::Server {
-        listen_addr: "127.0.0.1:20007".to_string(),
+        listen_addr: "127.0.0.1:31001".to_string(),
         target_addr: "t.cn:80".to_string(),
         tls_addr: TlsAddrs::try_from("feishu.cn").unwrap(),
         password: "test".to_string(),
@@ -34,8 +34,8 @@ fn tls13_v2() {
 #[test]
 fn tls13_v3_lossy() {
     let client = RunningArgs::Client {
-        listen_addr: "127.0.0.1:20008".to_string(),
-        target_addr: "127.0.0.1:20009".to_string(),
+        listen_addr: "127.0.0.1:31002".to_string(),
+        target_addr: "127.0.0.1:31003".to_string(),
         tls_names: TlsNames::try_from("feishu.cn").unwrap(),
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
@@ -43,7 +43,7 @@ fn tls13_v3_lossy() {
         v3: V3Mode::Lossy,
     };
     let server = RunningArgs::Server {
-        listen_addr: "127.0.0.1:20009".to_string(),
+        listen_addr: "127.0.0.1:31003".to_string(),
         target_addr: "t.cn:80".to_string(),
         tls_addr: TlsAddrs::try_from("feishu.cn").unwrap(),
         password: "test".to_string(),
@@ -59,8 +59,8 @@ fn tls13_v3_lossy() {
 #[test]
 fn tls13_v3_strict() {
     let client = RunningArgs::Client {
-        listen_addr: "127.0.0.1:20010".to_string(),
-        target_addr: "127.0.0.1:20011".to_string(),
+        listen_addr: "127.0.0.1:31004".to_string(),
+        target_addr: "127.0.0.1:31005".to_string(),
         tls_names: TlsNames::try_from("feishu.cn").unwrap(),
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
@@ -68,7 +68,7 @@ fn tls13_v3_strict() {
         v3: V3Mode::Strict,
     };
     let server = RunningArgs::Server {
-        listen_addr: "127.0.0.1:20011".to_string(),
+        listen_addr: "127.0.0.1:31005".to_string(),
         target_addr: "t.cn:80".to_string(),
         tls_addr: TlsAddrs::try_from("feishu.cn").unwrap(),
         password: "test".to_string(),
@@ -76,4 +76,55 @@ fn tls13_v3_strict() {
         v3: V3Mode::Strict,
     };
     utils::test_ok(client, server, T_CN_HTTP_REQUEST, T_CN_HTTP_RESP);
+}
+
+// protocol: v2
+// Note: v2 can not defend against hijack attack.
+// The interceptor will not see TLS Alert.
+// But it will cause data error.
+#[test]
+#[should_panic]
+fn tls13_v2_hijack() {
+    let client = RunningArgs::Client {
+        listen_addr: "127.0.0.1:31006".to_string(),
+        target_addr: "feishu.cn:443".to_string(),
+        tls_names: TlsNames::try_from("feishu.cn").unwrap(),
+        tls_ext: TlsExtConfig::new(None),
+        password: "test".to_string(),
+        nodelay: true,
+        v3: V3Mode::Disabled,
+    };
+    test_hijack(client);
+}
+
+// protocol: v3 lossy
+// tls1.3 with v3 protocol defends against hijack attack.
+#[test]
+fn tls13_v3_lossy_hijack() {
+    let client = RunningArgs::Client {
+        listen_addr: "127.0.0.1:31007".to_string(),
+        target_addr: "feishu.cn:443".to_string(),
+        tls_names: TlsNames::try_from("feishu.cn").unwrap(),
+        tls_ext: TlsExtConfig::new(None),
+        password: "test".to_string(),
+        nodelay: true,
+        v3: V3Mode::Lossy,
+    };
+    test_hijack(client);
+}
+
+// protocol: v3 strict
+// tls1.3 with v3 protocol defends against hijack attack.
+#[test]
+fn tls13_v3_strict_hijack() {
+    let client = RunningArgs::Client {
+        listen_addr: "127.0.0.1:31008".to_string(),
+        target_addr: "feishu.cn:443".to_string(),
+        tls_names: TlsNames::try_from("feishu.cn").unwrap(),
+        tls_ext: TlsExtConfig::new(None),
+        password: "test".to_string(),
+        nodelay: true,
+        v3: V3Mode::Strict,
+    };
+    test_hijack(client);
 }

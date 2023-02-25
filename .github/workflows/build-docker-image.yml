@@ -6,6 +6,7 @@ on:
 
 env:
   IMAGE_NAME: shadow-tls
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
   build:

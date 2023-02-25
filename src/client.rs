@@ -229,7 +229,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         let stream = stream.into_inner();
 
         // stage2:
-        if maybe_srh.is_none() || !authorized && self.v3.strict() {
+        if (maybe_srh.is_none() || !authorized) && self.v3.strict() {
             tracing::warn!("V3 strict enabled: traffic hijacked or TLS1.3 is not supported");
             let tls_stream = monoio_rustls_fork_shadow_tls::ClientTlsStream::new(stream, session);
             if let Err(e) = fake_request(tls_stream).await {
