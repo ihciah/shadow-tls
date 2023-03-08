@@ -22,6 +22,7 @@ services:
 # ALPN(optional): set alpns(like http/1.1, http/1.1;h2, recommend to leave it blank if you don't know it)
 # THREADS(optional): set threads number(recommend to leave it blank)
 # DISABLE_NODELAY(optional): disable TCP_NODELAY(recommend to leave it blank)
+# WILDCARD_SNI: Use sni:443 as handshake server(off/authed/all)
 
 # Note:
 # Multiple SNIs is supported now.

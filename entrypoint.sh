@@ -28,6 +28,11 @@ then
     then
         parameter="$parameter --tls $TLS"
     fi
+
+    if [ ! -z "$WILDCARD_SNI" ]
+    then
+        parameter="$parameter --wildcard-sni $WILDCARD_SNI"
+    fi
 fi
 
 if [ "$MODE" = "client" ]

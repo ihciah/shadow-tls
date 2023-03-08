@@ -2,11 +2,12 @@
 
 use std::{collections::HashMap, process::exit};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 use shadow_tls::{
     sip003::parse_sip003_options, RunningArgs, TlsAddrs, TlsExtConfig, TlsNames, V3Mode,
+    WildcardSNI,
 };
 
 #[derive(Parser, Debug)]
@@ -86,6 +87,12 @@ enum Commands {
         tls_addr: TlsAddrs,
         #[clap(long = "password", help = "Password")]
         password: String,
+        #[clap(
+            long = "wildcard-sni",
+            default_value = "off",
+            help = "Use sni:443 as handshake server without predefining mapping(useful for bypass billing system like airplane wifi without modifying server config)"
+        )]
+        wildcard_sni: WildcardSNI,
     },
 }
 
@@ -124,16 +131,20 @@ impl From<Args> for RunningArgs {
             Commands::Server {
                 listen,
                 server_addr,
-                tls_addr,
+                mut tls_addr,
                 password,
-            } => Self::Server {
-                listen_addr: listen,
-                target_addr: server_addr,
-                tls_addr,
-                password,
-                nodelay: !args.opts.disable_nodelay,
-                v3,
-            },
+                wildcard_sni,
+            } => {
+                tls_addr.set_wildcard_sni(wildcard_sni);
+                Self::Server {
+                    listen_addr: listen,
+                    target_addr: server_addr,
+                    tls_addr,
+                    password,
+                    nodelay: !args.opts.disable_nodelay,
+                    v3,
+                }
+            }
         }
     }
 }
@@ -189,12 +200,16 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
             .expect("tls param must be specified(like tls=xxx.com:443)");
         let tls_addrs = parse_server_addrs(tls_addr)
             .expect("tls param parse failed(like tls=xxx.com:443 or tls=yyy.com:1.2.3.4:443;zzz.com:443;xxx.com)");
+        let wildcard_sni =
+            WildcardSNI::from_str(opts.get("tls").map(AsRef::as_ref).unwrap_or_default(), true)
+                .expect("wildcard_sni format error");
         Args {
             cmd: crate::Commands::Server {
                 listen: format!("{ss_remote_host}:{ss_remote_port}"),
                 server_addr: format!("{ss_local_host}:{ss_local_port}"),
                 tls_addr: tls_addrs,
                 password: passwd.to_owned(),
+                wildcard_sni,
             },
             opts: args_opts,
         }

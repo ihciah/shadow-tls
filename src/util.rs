@@ -73,6 +73,22 @@ impl V3Mode {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, clap::ValueEnum)]
+pub enum WildcardSNI {
+    /// Disabled
+    Off,
+    /// For authenticated client only(may be differentiable); in v2 protocol it is eq to all.
+    Authed,
+    /// For all request(may cause service abused but not differentiable)
+    All,
+}
+
+impl Default for WildcardSNI {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 pub(crate) async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
 where
     R: monoio::io::AsyncReadRent,

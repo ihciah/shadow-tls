@@ -11,7 +11,7 @@ use std::{fmt::Display, thread::JoinHandle};
 pub use crate::{
     client::{ShadowTlsClient, TlsExtConfig, TlsNames},
     server::{ShadowTlsServer, TlsAddrs},
-    util::V3Mode,
+    util::{V3Mode, WildcardSNI},
 };
 
 pub enum RunningArgs {

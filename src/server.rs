@@ -27,6 +27,7 @@ use crate::{
         bind_with_pretty_error, copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*,
         support_tls13, verified_relay, xor_slice, CursorExt, Hmac, V3Mode,
     },
+    WildcardSNI,
 };
 
 /// ShadowTlsServer.
@@ -44,18 +45,30 @@ pub struct ShadowTlsServer<LA, TA> {
 pub struct TlsAddrs {
     dispatch: rustc_hash::FxHashMap<String, String>,
     fallback: String,
+    wildcard_sni: WildcardSNI,
 }
 
 impl TlsAddrs {
-    fn find(&self, key: Option<&str>) -> &str {
+    fn find<'a>(&'a self, key: Option<&str>, auth: bool) -> Cow<'a, str> {
         match key {
-            Some(k) => self.dispatch.get(k).unwrap_or(&self.fallback),
-            None => &self.fallback,
+            Some(k) => match self.dispatch.get(k) {
+                Some(v) => Cow::Borrowed(v),
+                None => match self.wildcard_sni {
+                    WildcardSNI::Authed if auth => Cow::Owned(format!("{k}:443")),
+                    WildcardSNI::All => Cow::Owned(format!("{k}:443")),
+                    _ => Cow::Borrowed(&self.fallback),
+                },
+            },
+            None => Cow::Borrowed(&self.fallback),
         }
     }
 
     fn is_empty(&self) -> bool {
         self.dispatch.is_empty()
+    }
+
+    pub fn set_wildcard_sni(&mut self, wildcard_sni: WildcardSNI) {
+        self.wildcard_sni = wildcard_sni;
     }
 }
 
@@ -103,7 +116,11 @@ impl TryFrom<&str> for TlsAddrs {
                 bail!("duplicate server addrs part found");
             }
         }
-        Ok(TlsAddrs { dispatch, fallback })
+        Ok(TlsAddrs {
+            dispatch,
+            fallback,
+            wildcard_sni: Default::default(),
+        })
     }
 }
 
@@ -186,8 +203,10 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
 
         // choose handshake server addr and connect
         let server_name = server_name.and_then(|s| String::from_utf8(s).ok());
-        let addr = self.tls_addr.find(server_name.as_ref().map(AsRef::as_ref));
-        let mut out_stream = TcpStream::connect(addr).await?;
+        let addr = self
+            .tls_addr
+            .find(server_name.as_ref().map(AsRef::as_ref), true);
+        let mut out_stream = TcpStream::connect(addr.as_ref()).await?;
         mod_tcp_conn(&mut out_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
 
@@ -247,8 +266,10 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
 
         // connect handshake server
         let server_name = sni.and_then(|s| String::from_utf8(s).ok());
-        let addr = self.tls_addr.find(server_name.as_ref().map(AsRef::as_ref));
-        let mut handshake_stream = TcpStream::connect(addr).await?;
+        let addr = self
+            .tls_addr
+            .find(server_name.as_ref().map(AsRef::as_ref), client_hello_pass);
+        let mut handshake_stream = TcpStream::connect(addr.as_ref()).await?;
         mod_tcp_conn(&mut handshake_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
         tracing::trace!("ClientHello frame {first_client_frame:?}");
@@ -887,7 +908,8 @@ mod tests {
             TlsAddrs::try_from("google.com").unwrap(),
             TlsAddrs {
                 dispatch: map![],
-                fallback: s!("google.com:443")
+                fallback: s!("google.com:443"),
+                wildcard_sni: Default::default(),
             }
         );
         assert_eq!(
@@ -897,7 +919,8 @@ mod tests {
                     "feishu.cn" => "feishu.cn:443",
                     "cloudflare.com" => "1.1.1.1:80",
                 ],
-                fallback: s!("google.com:443")
+                fallback: s!("google.com:443"),
+                wildcard_sni: Default::default(),
             }
         );
         assert_eq!(
@@ -906,7 +929,8 @@ mod tests {
                 dispatch: map![
                     "captive.apple.com" => "captive.apple.com:443",
                 ],
-                fallback: s!("feishu.cn:80")
+                fallback: s!("feishu.cn:80"),
+                wildcard_sni: Default::default(),
             }
         );
     }
