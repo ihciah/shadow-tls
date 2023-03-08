@@ -9,6 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224afbd727c3d6e4b90103ece64b8d1b67fbb1973b1046c2281eed3f3803f800"
 
 [[package]]
+name = "auto-const-array"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "336c4771be12bbacae182a5ad2a788bfa27d2c21c5837731480ab5cf161c0e04"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22,9 +33,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "block-buffer"
-version = "0.10.3"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69cce20737498f97b993470a6e536b8523f0af7892a4f928cceb1ac5e52ebe7e"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
@@ -299,9 +310,9 @@ checksum = "f051f77a7c8e6957c0696eac88f26b0117e54f52d3fc682ab19397a8812846a4"
 
 [[package]]
 name = "local-sync"
-version = "0.0.5"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56ae84de7298d25e454f7c95077e85e04585445626f9b2606b1634f125667eff"
+checksum = "5271fc029f75f74ab28194c9bd8580a1b953a8c3896e70b2a61b8dceb3667e79"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -349,10 +360,11 @@ dependencies = [
 
 [[package]]
 name = "monoio"
-version = "0.0.9"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a95486b08b357dfe586456169452352790e9c194e95374bf36b18c11a78a0d8"
+checksum = "632e2f60c343347c69fa9a0887dcf28ae53a9c4734dc2a1be2cc5ac4b8ef7c99"
 dependencies = [
+ "auto-const-array",
  "bytes",
  "fxhash",
  "io-uring",
@@ -361,9 +373,7 @@ dependencies = [
  "monoio-macros",
  "nix 0.25.1",
  "pin-project-lite",
- "scoped-tls",
  "socket2",
- "windows",
 ]
 
 [[package]]
@@ -379,9 +389,9 @@ dependencies = [
 
 [[package]]
 name = "monoio-rustls-fork-shadow-tls"
-version = "0.0.8-mod.2"
+version = "0.1.0-mod.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ce576264fc2b3a54f3f9d0159e6968cccfcd59cbd24aaac422999490678434"
+checksum = "7fefca5f80af1220549bd1eabeba11fc974c459e27717d8113f302daad8dbfe9"
 dependencies = [
  "bytes",
  "monoio",
@@ -605,12 +615,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scoped-tls"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
-
-[[package]]
 name = "sct"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -682,12 +686,12 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 
 [[package]]
 name = "socket2"
-version = "0.4.9"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
+checksum = "bc8d618c6641ae355025c449427f9e96b98abf99a772be3cef6708d15c77147a"
 dependencies = [
  "libc",
- "winapi",
+ "windows-sys",
 ]
 
 [[package]]
@@ -975,21 +979,6 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
-
-[[package]]
-name = "windows"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0286ba339aa753e70765d521bb0242cc48e1194562bfa2a2ad7ac8a6de28f5d5"
-dependencies = [
- "windows_aarch64_gnullvm",
- "windows_aarch64_msvc",
- "windows_i686_gnu",
- "windows_i686_msvc",
- "windows_x86_64_gnu",
- "windows_x86_64_gnullvm",
- "windows_x86_64_msvc",
-]
 
 [[package]]
 name = "windows-sys"

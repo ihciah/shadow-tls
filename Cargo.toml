@@ -1,6 +1,6 @@
 [package]
 authors = ["ihciah <ihciah@gmail.com>"]
-description = "A proxy to expose real tls handshake to the firewall."
+description = "A proxy to expose real tls handshake to the MITM."
 edition = "2021"
 keywords = ["proxy", "tls", "shadowsocks"]
 license = "MIT/Apache-2.0"
@@ -10,8 +10,8 @@ repository = "https://github.com/ihciah/shadow-tls"
 version = "0.2.19"
 
 [dependencies]
-monoio = {version = "0.0.9"}
-monoio-rustls-fork-shadow-tls = {version = "0.0.8-mod.2"}
+monoio = {version = "0.1.0"}
+monoio-rustls-fork-shadow-tls = {version = "0.1.0-mod.0"}
 rustls-fork-shadow-tls = {version = "0.20.9-mod.2", default-features = false}
 
 anyhow = "1"
@@ -19,7 +19,7 @@ byteorder = "1"
 clap = {version = "4", features = ["derive"]}
 ctrlc = {version = "3", features = ["termination"]}
 hmac = "0.12"
-local-sync = "0.0.5"
+local-sync = "0.1.0"
 pin-project-lite = "0.2"
 rand = "0.8"
 rustc-hash = "1"

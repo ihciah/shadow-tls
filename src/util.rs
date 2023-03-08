@@ -89,6 +89,16 @@ impl Default for WildcardSNI {
     }
 }
 
+impl std::fmt::Display for WildcardSNI {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WildcardSNI::Off => write!(f, "off"),
+            WildcardSNI::Authed => write!(f, "authed"),
+            WildcardSNI::All => write!(f, "all"),
+        }
+    }
+}
+
 pub(crate) async fn copy_until_eof<R, W>(mut read_half: R, mut write_half: W) -> std::io::Result<()>
 where
     R: monoio::io::AsyncReadRent,

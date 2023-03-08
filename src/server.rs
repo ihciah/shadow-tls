@@ -126,6 +126,7 @@ impl TryFrom<&str> for TlsAddrs {
 
 impl std::fmt::Display for TlsAddrs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(wildcard-sni:{})", self.wildcard_sni)?;
         for (k, v) in self.dispatch.iter() {
             write!(f, "{k}->{v};")?;
         }
