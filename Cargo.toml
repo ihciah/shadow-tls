@@ -7,11 +7,11 @@ license = "MIT/Apache-2.0"
 name = "shadow-tls"
 readme = "README.md"
 repository = "https://github.com/ihciah/shadow-tls"
-version = "0.2.19"
+version = "0.2.20"
 
 [dependencies]
-monoio = {version = "0.1.0"}
-monoio-rustls-fork-shadow-tls = {version = "0.1.0-mod.0"}
+monoio = {version = "0.1.2"}
+monoio-rustls-fork-shadow-tls = {version = "0.1.1-mod.0"}
 rustls-fork-shadow-tls = {version = "0.20.9-mod.2", default-features = false}
 
 anyhow = "1"
