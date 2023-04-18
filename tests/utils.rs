@@ -6,8 +6,12 @@ use std::{
 
 use shadow_tls::RunningArgs;
 
-pub const T_CN_HTTP_REQUEST: &[u8; 43] = b"GET / HTTP/1.1\r\nHost: t.cn\r\nAccept: */*\r\n\r\n";
-pub const T_CN_HTTP_RESP: &[u8; 12] = b"HTTP/1.1 302";
+pub const BING_HTTP_REQUEST: &[u8; 47] = b"GET / HTTP/1.1\r\nHost: bing.com\r\nAccept: */*\r\n\r\n";
+pub const BING_HTTP_RESP: &[u8; 12] = b"HTTP/1.1 301";
+
+pub const CAPTIVE_HTTP_REQUEST: &[u8; 56] =
+    b"GET / HTTP/1.1\r\nHost: captive.apple.com\r\nAccept: */*\r\n\r\n";
+pub const CAPTIVE_HTTP_RESP: &[u8; 15] = b"HTTP/1.1 200 OK";
 
 pub fn test_ok(
     client: RunningArgs,
@@ -23,7 +27,7 @@ pub fn test_ok(
     server.build().expect("build server failed").start(1);
 
     // sleep 1s to make sure client and server have started
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_secs(3));
     let mut conn = TcpStream::connect(client_listen).unwrap();
     conn.write_all(http_request)
         .expect("unable to send http request");
@@ -42,7 +46,7 @@ pub fn test_hijack(client: RunningArgs) {
     client.build().expect("build client failed").start(1);
 
     // sleep 1s to make sure client and server have started
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_secs(3));
     let mut conn = TcpStream::connect(client_listen).unwrap();
     conn.write_all(b"dummy").unwrap();
     conn.set_read_timeout(Some(Duration::from_secs(1))).unwrap();

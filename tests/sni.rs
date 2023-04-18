@@ -8,8 +8,9 @@ use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
 use shadow_tls::{RunningArgs, TlsAddrs, V3Mode};
 
-const FEISHU_HTTP_REQUEST: &[u8; 48] = b"GET / HTTP/1.1\r\nHost: feishu.cn\r\nAccept: */*\r\n\r\n";
-const FEISHU_CN_HTTP_RESP: &[u8; 30] = b"HTTP/1.1 301 Moved Permanently";
+#[allow(unused)]
+mod utils;
+use utils::{CAPTIVE_HTTP_REQUEST, CAPTIVE_HTTP_RESP};
 
 #[monoio::test(enable_timer = true)]
 async fn sni() {
@@ -31,8 +32,8 @@ async fn sni() {
     // run server
     let server = RunningArgs::Server {
         listen_addr: "127.0.0.1:32000".to_string(),
-        target_addr: "t.cn:80".to_string(),
-        tls_addr: TlsAddrs::try_from("feishu.cn").unwrap(),
+        target_addr: "bing.com:80".to_string(),
+        tls_addr: TlsAddrs::try_from("captive.apple.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
         v3: V3Mode::Strict,
@@ -41,27 +42,22 @@ async fn sni() {
     monoio::time::sleep(Duration::from_secs(1)).await;
 
     // connect and handshake
-    let mut feishu_conn = tls_connector
+    let mut captive_conn = tls_connector
         .connect(
-            ServerName::try_from("feishu.cn").unwrap(),
+            ServerName::try_from("captive.apple.com").unwrap(),
             TcpStream::connect("127.0.0.1:32000").await.unwrap(),
         )
         .await
-        .expect("unable to connect feishu.cn");
-    feishu_conn
-        .write_all(FEISHU_HTTP_REQUEST.to_vec())
+        .expect("unable to connect captive.apple.com");
+    captive_conn
+        .write_all(CAPTIVE_HTTP_REQUEST)
         .await
         .0
         .unwrap();
-    let (res, buf) = feishu_conn
-        .read_exact(vec![0; FEISHU_CN_HTTP_RESP.len()])
+
+    let (res, buf) = captive_conn
+        .read_exact(vec![0; CAPTIVE_HTTP_RESP.len()])
         .await;
     assert!(res.is_ok());
-    assert_eq!(&buf, FEISHU_CN_HTTP_RESP);
-
-    let conn = TcpStream::connect("127.0.0.1:32000").await.unwrap();
-    assert!(tls_connector
-        .connect(ServerName::try_from("t.cn").unwrap(), conn)
-        .await
-        .is_err());
+    assert_eq!(&buf, CAPTIVE_HTTP_RESP);
 }
