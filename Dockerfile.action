@@ -1,0 +1,25 @@
+FROM alpine:latest as builder
+
+ARG DOWNLOAD_BASE
+RUN ARCH=$(uname -m | sed -e "s/armv7l/armv7-unknown-linux-musleabihf/g" | sed -e "s/aarch64/aarch64-unknown-linux-musl/g" | sed -e "s/x86_64/x86_64-unknown-linux-musl/g") && \
+    apk add --no-cache curl && \
+    curl -L "${DOWNLOAD_BASE}/shadow-tls-${ARCH}" -o /shadow-tls && \
+    chmod +x /shadow-tls
+
+FROM alpine:latest
+
+ENV MODE=""
+ENV LISTEN=""
+ENV SERVER=""
+ENV TLS=""
+ENV THREADS=""
+ENV PASSWORD=""
+ENV ALPN=""
+ENV DISABLE_NODELAY=""
+ENV V3=""
+ENV STRICT=""
+
+COPY ./entrypoint.sh /
+RUN chmod +x /entrypoint.sh && apk add --no-cache ca-certificates
+COPY --from=builder /shadow-tls /usr/local/bin/shadow-tls
+ENTRYPOINT ["/entrypoint.sh"]

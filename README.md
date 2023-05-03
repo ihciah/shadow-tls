@@ -1,5 +1,5 @@
 # Shadow TLS
-[![Build Docker Image](https://github.com/ihciah/shadow-tls/actions/workflows/build-docker-image.yml/badge.svg)](https://github.com/ihciah/shadow-tls/pkgs/container/shadow-tls) [![Build Releas](https://github.com/ihciah/shadow-tls/actions/workflows/build-release.yml/badge.svg)](https://github.com/ihciah/shadow-tls/releases) [![Crates.io](https://img.shields.io/crates/v/shadow-tls.svg)](https://crates.io/crates/shadow-tls) [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_shield)
+[![Build Releases](https://github.com/ihciah/shadow-tls/actions/workflows/build-release.yml/badge.svg)](https://github.com/ihciah/shadow-tls/releases) [![Crates.io](https://img.shields.io/crates/v/shadow-tls.svg)](https://crates.io/crates/shadow-tls) [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fihciah%2Fshadow-tls?ref=badge_shield)
 
 一个**可以使用别人的受信证书**的 TLS 伪装代理。
 
