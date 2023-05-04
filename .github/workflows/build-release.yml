@@ -72,7 +72,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           file: Dockerfile.action
-          build-args: "DOWNLOAD_BASE=https://github.com/${{ github.repository }}/releases/${{ env.VERSIONED_TAG }}/download/"
+          build-args: "DOWNLOAD_BASE=https://github.com/${{ github.repository }}/releases/download/${{ env.VERSIONED_TAG }}"
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
