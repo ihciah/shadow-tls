@@ -7,10 +7,10 @@ license = "MIT/Apache-2.0"
 name = "shadow-tls"
 readme = "README.md"
 repository = "https://github.com/ihciah/shadow-tls"
-version = "0.2.21"
+version = "0.2.22"
 
 [dependencies]
-monoio = { version = "0.1.2" }
+monoio = { version = "0.1.3" }
 monoio-rustls-fork-shadow-tls = { version = "0.1.1-mod.0" }
 rustls-fork-shadow-tls = { version = "0.20.9-mod.2", default-features = false }
 
@@ -32,3 +32,6 @@ webpki-roots = "0.22"
 [profile.release]
 lto = true
 opt-level = 3
+
+[patch.crates-io]
+monoio = { git = "https://github.com/ihciah/monoio", branch = "tfo-mac" }

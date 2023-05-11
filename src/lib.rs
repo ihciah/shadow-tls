@@ -22,6 +22,7 @@ pub enum RunningArgs {
         tls_ext: TlsExtConfig,
         password: String,
         nodelay: bool,
+        fastopen: bool,
         v3: V3Mode,
     },
     Server {
@@ -30,6 +31,7 @@ pub enum RunningArgs {
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
+        fastopen: bool,
         v3: V3Mode,
     },
 }
@@ -45,6 +47,7 @@ impl RunningArgs {
                 tls_ext,
                 password,
                 nodelay,
+                fastopen,
                 v3,
             } => Ok(Runnable::Client(ShadowTlsClient::new(
                 listen_addr,
@@ -53,6 +56,7 @@ impl RunningArgs {
                 tls_ext,
                 password,
                 nodelay,
+                fastopen,
                 v3,
             )?)),
             RunningArgs::Server {
@@ -61,6 +65,7 @@ impl RunningArgs {
                 tls_addr,
                 password,
                 nodelay,
+                fastopen,
                 v3,
             } => Ok(Runnable::Server(ShadowTlsServer::new(
                 listen_addr,
@@ -68,6 +73,7 @@ impl RunningArgs {
                 tls_addr,
                 password,
                 nodelay,
+                fastopen,
                 v3,
             ))),
         }

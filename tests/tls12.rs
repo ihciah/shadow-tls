@@ -16,6 +16,7 @@ fn tls12_v2() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Disabled,
     };
     let server = RunningArgs::Server {
@@ -24,6 +25,7 @@ fn tls12_v2() {
         tls_addr: TlsAddrs::try_from("bing.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Disabled,
     };
     test_ok(client, server, CAPTIVE_HTTP_REQUEST, CAPTIVE_HTTP_RESP);
@@ -41,6 +43,7 @@ fn tls12_v3_lossy() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     let server = RunningArgs::Server {
@@ -49,6 +52,7 @@ fn tls12_v3_lossy() {
         tls_addr: TlsAddrs::try_from("bing.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     utils::test_ok(client, server, CAPTIVE_HTTP_REQUEST, CAPTIVE_HTTP_RESP);
@@ -68,6 +72,7 @@ fn tls12_v3_strict() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     let server = RunningArgs::Server {
@@ -76,6 +81,7 @@ fn tls12_v3_strict() {
         tls_addr: TlsAddrs::try_from("bing.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     utils::test_ok(client, server, CAPTIVE_HTTP_REQUEST, CAPTIVE_HTTP_RESP);
@@ -97,6 +103,7 @@ fn tls12_v2_hijack() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Disabled,
     };
     test_hijack(client);
@@ -119,6 +126,7 @@ fn tls12_v3_lossy_hijack() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     test_hijack(client);

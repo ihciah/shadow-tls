@@ -10,7 +10,7 @@ use local_sync::oneshot::{Receiver, Sender};
 use monoio::{
     buf::IoBufMut,
     io::{AsyncReadRent, AsyncWriteRent, AsyncWriteRentExt, Splitable},
-    net::{TcpListener, TcpStream},
+    net::{ListenerOpts, TcpListener, TcpStream},
 };
 
 use hmac::Mac;
@@ -216,8 +216,12 @@ pub(crate) async fn verified_relay(
 }
 
 /// Bind with pretty error.
-pub(crate) fn bind_with_pretty_error<A: ToSocketAddrs>(addr: A) -> anyhow::Result<TcpListener> {
-    TcpListener::bind(addr).map_err(|e| match e.kind() {
+pub(crate) fn bind_with_pretty_error<A: ToSocketAddrs>(
+    addr: A,
+    fastopen: bool,
+) -> anyhow::Result<TcpListener> {
+    let cfg = ListenerOpts::default().tcp_fast_open(fastopen);
+    TcpListener::bind_with_config(addr, &cfg).map_err(|e| match e.kind() {
         ErrorKind::AddrInUse => {
             anyhow::anyhow!("bind failed, check if the port is used: {e}")
         }

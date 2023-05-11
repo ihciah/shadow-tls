@@ -16,6 +16,7 @@ fn tls13_v2() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Disabled,
     };
     let server = RunningArgs::Server {
@@ -24,6 +25,7 @@ fn tls13_v2() {
         tls_addr: TlsAddrs::try_from("captive.apple.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Disabled,
     };
     test_ok(client, server, BING_HTTP_REQUEST, BING_HTTP_RESP);
@@ -41,6 +43,7 @@ fn tls13_v3_lossy() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     let server = RunningArgs::Server {
@@ -49,6 +52,7 @@ fn tls13_v3_lossy() {
         tls_addr: TlsAddrs::try_from("captive.apple.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     utils::test_ok(client, server, BING_HTTP_REQUEST, BING_HTTP_RESP);
@@ -66,6 +70,7 @@ fn tls13_v3_strict() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     let server = RunningArgs::Server {
@@ -74,6 +79,7 @@ fn tls13_v3_strict() {
         tls_addr: TlsAddrs::try_from("captive.apple.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     utils::test_ok(client, server, BING_HTTP_REQUEST, BING_HTTP_RESP);
@@ -91,6 +97,7 @@ fn tls13_v3_lossy_hijack() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Lossy,
     };
     test_hijack(client);
@@ -108,6 +115,7 @@ fn tls13_v3_strict_hijack() {
         tls_ext: TlsExtConfig::new(None),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     test_hijack(client);

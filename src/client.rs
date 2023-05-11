@@ -9,7 +9,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use monoio::{
     buf::IoBufMut,
     io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
-    net::TcpStream,
+    net::{TcpConnectOpts, TcpStream},
 };
 use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rand::{prelude::Distribution, seq::SliceRandom, Rng};
@@ -34,6 +34,7 @@ pub struct ShadowTlsClient<LA, TA> {
     tls_names: Arc<TlsNames>,
     password: Arc<String>,
     nodelay: bool,
+    fastopen: bool,
     v3: V3Mode,
 }
 
@@ -110,6 +111,7 @@ impl std::fmt::Display for TlsExtConfig {
 
 impl<LA, TA> ShadowTlsClient<LA, TA> {
     /// Create new ShadowTlsClient.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         listen_addr: LA,
         target_addr: TA,
@@ -117,6 +119,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         tls_ext_config: TlsExtConfig,
         password: String,
         nodelay: bool,
+        fastopen: bool,
         v3: V3Mode,
     ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
@@ -147,6 +150,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
             tls_names: Arc::new(tls_names),
             password: Arc::new(password),
             nodelay,
+            fastopen,
             v3,
         })
     }
@@ -157,7 +161,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         LA: std::net::ToSocketAddrs + 'static,
         TA: std::net::ToSocketAddrs + 'static,
     {
-        let listener = bind_with_pretty_error(self.listen_addr.as_ref())?;
+        let listener = bind_with_pretty_error(self.listen_addr.as_ref(), self.fastopen)?;
         let shared = Rc::new(self);
         loop {
             match listener.accept().await {
@@ -204,7 +208,16 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
     where
         TA: std::net::ToSocketAddrs,
     {
-        let mut stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+        let addr = self
+            .target_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "empty address"))?;
+        let mut stream = TcpStream::connect_addr_with_config(
+            addr,
+            &TcpConnectOpts::default().tcp_fast_open(self.fastopen),
+        )
+        .await?;
         mod_tcp_conn(&mut stream, true, self.nodelay);
         tracing::debug!("tcp connected, start handshaking");
 
@@ -269,7 +282,16 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
     where
         TA: std::net::ToSocketAddrs,
     {
-        let mut stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+        let addr = self
+            .target_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "empty address"))?;
+        let mut stream = TcpStream::connect_addr_with_config(
+            addr,
+            &TcpConnectOpts::default().tcp_fast_open(self.fastopen),
+        )
+        .await?;
         mod_tcp_conn(&mut stream, true, self.nodelay);
         tracing::debug!("tcp connected, start handshaking");
         let stream = HashedReadStream::new(stream, self.password.as_bytes())?;

@@ -38,6 +38,7 @@ pub struct ShadowTlsServer<LA, TA> {
     tls_addr: Arc<TlsAddrs>,
     password: Arc<String>,
     nodelay: bool,
+    fastopen: bool,
     v3: V3Mode,
 }
 
@@ -141,6 +142,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
+        fastopen: bool,
         v3: V3Mode,
     ) -> Self {
         Self {
@@ -149,6 +151,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
             tls_addr: Arc::new(tls_addr),
             password: Arc::new(password),
             nodelay,
+            fastopen,
             v3,
         }
     }
@@ -161,7 +164,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
         LA: std::net::ToSocketAddrs + 'static,
         TA: std::net::ToSocketAddrs + 'static,
     {
-        let listener = bind_with_pretty_error(self.listen_addr.as_ref())?;
+        let listener = bind_with_pretty_error(self.listen_addr.as_ref(), self.fastopen)?;
         let shared = Rc::new(self);
         loop {
             match listener.accept().await {

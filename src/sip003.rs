@@ -36,7 +36,7 @@ fn index_unescaped(s: &str, term: &[u8]) -> Result<(usize, String), anyhow::Erro
 
     while i < s.len() {
         let mut b: u8 = s.as_bytes()[i];
-        if let Some(..) = term.iter().find(|&&e| b == e) {
+        if term.iter().any(|&e| b == e) {
             break;
         }
         if b == b'\\' {

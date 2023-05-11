@@ -10,6 +10,11 @@ then
     parameter="$parameter --disable-nodelay"
 fi
 
+if [ ! -z "$FASTOPEN" ]
+then
+    parameter="$parameter --fastopen"
+fi
+
 if [ ! -z "$V3" ]
 then
     parameter="$parameter --v3"

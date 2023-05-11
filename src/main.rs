@@ -28,8 +28,10 @@ struct Args {
 struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
-    #[clap(short, long, help = "Disable TCP_NODELAY")]
+    #[clap(long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
+    #[clap(long, help = "Enable TCP_FASTOPEN")]
+    fastopen: bool,
     #[clap(long, help = "Use v3 protocol")]
     v3: bool,
     #[clap(long, help = "Strict mode(only for v3 protocol)")]
@@ -126,6 +128,7 @@ impl From<Args> for RunningArgs {
                 tls_ext: TlsExtConfig::from(alpn),
                 password,
                 nodelay: !args.opts.disable_nodelay,
+                fastopen: args.opts.fastopen,
                 v3,
             },
             Commands::Server {
@@ -142,6 +145,7 @@ impl From<Args> for RunningArgs {
                     tls_addr,
                     password,
                     nodelay: !args.opts.disable_nodelay,
+                    fastopen: args.opts.fastopen,
                     v3,
                 }
             }

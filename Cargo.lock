@@ -421,9 +421,8 @@ dependencies = [
 
 [[package]]
 name = "monoio"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "762fe3b52f2193a2b28ac992576f60b282b63e2fe80549f906e8d2f4a48e1c81"
+version = "0.1.3"
+source = "git+https://github.com/ihciah/monoio?branch=tfo-mac#805f5d252111cc333316737c43d5f11c27b1a43b"
 dependencies = [
  "auto-const-array",
  "bytes",
@@ -440,12 +439,11 @@ dependencies = [
 [[package]]
 name = "monoio-macros"
 version = "0.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c85c9d2114c190b1ec18da29bfbe399a95d81657633b0d2333d4084515aa9f95"
+source = "git+https://github.com/ihciah/monoio?branch=tfo-mac#805f5d252111cc333316737c43d5f11c27b1a43b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.15",
 ]
 
 [[package]]
@@ -685,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "shadow-tls"
-version = "0.2.21"
+version = "0.2.22"
 dependencies = [
  "anyhow",
  "byteorder",

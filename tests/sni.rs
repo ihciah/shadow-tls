@@ -36,6 +36,7 @@ async fn sni() {
         tls_addr: TlsAddrs::try_from("captive.apple.com").unwrap(),
         password: "test".to_string(),
         nodelay: true,
+        fastopen: true,
         v3: V3Mode::Strict,
     };
     server.build().expect("build server failed").start(1);
