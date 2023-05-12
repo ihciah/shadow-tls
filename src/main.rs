@@ -1,6 +1,6 @@
 #![feature(type_alias_impl_trait)]
 
-use std::{collections::HashMap, process::exit};
+use std::{collections::HashMap, process::exit, path::PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
@@ -10,7 +10,10 @@ use shadow_tls::{
     WildcardSNI,
 };
 
-#[derive(Parser, Debug)]
+use serde::Deserialize;
+use serde_json;
+
+#[derive(Parser, Debug, Deserialize)]
 #[clap(
     author,
     version,
@@ -19,12 +22,14 @@ use shadow_tls::{
 )]
 struct Args {
     #[clap(subcommand)]
+    #[serde(flatten)]
     cmd: Commands,
     #[clap(flatten)]
+    #[serde(flatten)]
     opts: Opts,
 }
 
-#[derive(Parser, Debug, Default, Clone)]
+#[derive(Parser, Debug, Default, Clone, Deserialize)]
 struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
@@ -38,9 +43,10 @@ struct Opts {
     strict: bool,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Deserialize)]
 enum Commands {
     #[clap(about = "Run client side")]
+    #[serde(rename = "client")]
     Client {
         #[clap(
             long = "listen",
@@ -69,6 +75,7 @@ enum Commands {
         alpn: Option<Vec<String>>,
     },
     #[clap(about = "Run server side")]
+    #[serde(rename = "server")]
     Server {
         #[clap(
             long = "listen",
@@ -96,6 +103,12 @@ enum Commands {
         )]
         wildcard_sni: WildcardSNI,
     },
+    #[serde(skip)]
+    Config{
+        #[serde(skip)]
+        #[clap(short, long, value_name = "FILE", help = "Path to config file")]
+        config: PathBuf
+    },
 }
 
 fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
@@ -104,6 +117,25 @@ fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
 
 fn parse_server_addrs(arg: &str) -> anyhow::Result<TlsAddrs> {
     TlsAddrs::try_from(arg)
+}
+
+fn read_config_file(filename: String) -> Args {
+    let file = std::fs::File::open(filename);
+    match file {
+        Err(e) => {
+            tracing::error!("cannot open config file: {}", e);
+            exit(-1);
+        }
+        Ok(f) => {
+            match serde_json::from_reader(f) {
+                Err(e) => {
+                    tracing::error!("cannot read config file: {}", e);
+                    exit(-1);
+                }
+                Ok(res) => res
+            }
+        }
+    }
 }
 
 impl From<Args> for RunningArgs {
@@ -148,6 +180,11 @@ impl From<Args> for RunningArgs {
                     fastopen: args.opts.fastopen,
                     v3,
                 }
+            },
+            Commands::Config{
+                config: _
+            } => { 
+                unreachable!()
             }
         }
     }
@@ -173,8 +210,18 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
                 Some(val) => val,
             }
         };
+        (optional $key: expr) => {
+            match std::env::var($key).ok() {
+                None => "".to_string(),
+                Some(val) if val.is_empty() => "".to_string(),
+                Some(val) => val,
+            }
+        }
     }
-
+    let config_file = env!(optional "CONFIG_FILE");
+    if config_file != "" {
+        return Some(read_config_file(config_file));
+    }
     let ss_remote_host = env!("SS_REMOTE_HOST");
     let ss_remote_port = env!("SS_REMOTE_PORT");
     let ss_local_host = env!("SS_LOCAL_HOST");
@@ -246,7 +293,13 @@ fn main() {
                 .add_directive("rustls=off".parse().unwrap()),
         )
         .init();
-    let args = get_sip003_arg().unwrap_or_else(Args::parse);
+    let mut args = get_sip003_arg().unwrap_or_else(Args::parse);
+    match args.cmd {
+        Commands::Config {config} => {
+            args = read_config_file(config.to_str().unwrap().to_string());
+        },
+        _ => ()
+    }
     let parallelism = get_parallelism(&args);
     let running_args = RunningArgs::from(args);
     tracing::info!("Start {parallelism}-thread {running_args}");

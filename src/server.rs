@@ -17,6 +17,7 @@ use monoio::{
     },
     net::TcpStream,
 };
+use serde::Deserialize;
 
 use crate::{
     helper_v2::{
@@ -42,7 +43,7 @@ pub struct ShadowTlsServer<LA, TA> {
     v3: V3Mode,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct TlsAddrs {
     dispatch: rustc_hash::FxHashMap<String, String>,
     fallback: String,

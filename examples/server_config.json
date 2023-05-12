@@ -1,0 +1,21 @@
+{
+	"disable_nodelay": false,
+	"fastopen": true,
+	"v3": true,
+	"strict": true,
+	"server": {
+		"listen": "localhost:8443",
+		"server_addr": "localhost:24000",
+		"tls_addr": {
+			"wildcard_sni": "off",
+			"dispatch": {
+				"cloudflare.com": "1.1.1.1:443",
+				"captive.apple.com": "captive.apple.com:443"
+			},
+			"fallback": "cloud.tencent.com:443"
+		},
+		"password": "12345678",
+		"wildcard_sni": "authed"
+	}
+}
+
