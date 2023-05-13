@@ -14,7 +14,7 @@ use monoio::{
 use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rand::{prelude::Distribution, seq::SliceRandom, Rng};
 use rustls_fork_shadow_tls::{OwnedTrustAnchor, RootCertStore, ServerName};
-use serde::{Deserialize, de::Visitor};
+use serde::{de::Visitor, Deserialize};
 
 use crate::{
     helper_v2::{copy_with_application_data, copy_without_application_data, HashedReadStream},
@@ -74,25 +74,28 @@ impl<'de> Visitor<'de> for TlsNamesVisitor {
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error, {
+    where
+        E: serde::de::Error,
+    {
         match Self::Value::try_from(v) {
             Err(e) => Err(E::custom(e.to_string())),
-            Ok(u) => Ok(u)
+            Ok(u) => Ok(u),
         }
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error, {
+    where
+        E: serde::de::Error,
+    {
         Self.visit_str(&v)
     }
 }
 
 impl<'de> Deserialize<'de> for TlsNames {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         deserializer.deserialize_string(TlsNamesVisitor)
     }
 }

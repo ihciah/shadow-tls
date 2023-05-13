@@ -77,13 +77,13 @@ impl V3Mode {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, clap::ValueEnum, Deserialize)]
 pub enum WildcardSNI {
     /// Disabled
-    #[serde(rename="off")]
+    #[serde(rename = "off")]
     Off,
     /// For authenticated client only(may be differentiable); in v2 protocol it is eq to all.
-    #[serde(rename="authed")]
+    #[serde(rename = "authed")]
     Authed,
     /// For all request(may cause service abused but not differentiable)
-    #[serde(rename="all")]
+    #[serde(rename = "all")]
     All,
 }
 

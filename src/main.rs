@@ -1,6 +1,6 @@
 #![feature(type_alias_impl_trait)]
 
-use std::{collections::HashMap, process::exit, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::exit};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
@@ -104,10 +104,10 @@ enum Commands {
         wildcard_sni: WildcardSNI,
     },
     #[serde(skip)]
-    Config{
+    Config {
         #[serde(skip)]
         #[clap(short, long, value_name = "FILE", help = "Path to config file")]
-        config: PathBuf
+        config: PathBuf,
     },
 }
 
@@ -126,15 +126,13 @@ fn read_config_file(filename: String) -> Args {
             tracing::error!("cannot open config file: {}", e);
             exit(-1);
         }
-        Ok(f) => {
-            match serde_json::from_reader(f) {
-                Err(e) => {
-                    tracing::error!("cannot read config file: {}", e);
-                    exit(-1);
-                }
-                Ok(res) => res
+        Ok(f) => match serde_json::from_reader(f) {
+            Err(e) => {
+                tracing::error!("cannot read config file: {}", e);
+                exit(-1);
             }
-        }
+            Ok(res) => res,
+        },
     }
 }
 
@@ -180,10 +178,8 @@ impl From<Args> for RunningArgs {
                     fastopen: args.opts.fastopen,
                     v3,
                 }
-            },
-            Commands::Config{
-                config: _
-            } => { 
+            }
+            Commands::Config { config: _ } => {
                 unreachable!()
             }
         }
@@ -216,7 +212,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
                 Some(val) if val.is_empty() => "".to_string(),
                 Some(val) => val,
             }
-        }
+        };
     }
     let config_file = env!(optional "CONFIG_FILE");
     if config_file != "" {
@@ -295,10 +291,10 @@ fn main() {
         .init();
     let mut args = get_sip003_arg().unwrap_or_else(Args::parse);
     match args.cmd {
-        Commands::Config {config} => {
+        Commands::Config { config } => {
             args = read_config_file(config.to_str().unwrap().to_string());
-        },
-        _ => ()
+        }
+        _ => (),
     }
     let parallelism = get_parallelism(&args);
     let running_args = RunningArgs::from(args);
