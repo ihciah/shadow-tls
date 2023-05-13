@@ -11,7 +11,6 @@ use shadow_tls::{
 };
 
 use serde::Deserialize;
-use serde_json;
 
 #[derive(Parser, Debug, Deserialize)]
 #[clap(
@@ -215,7 +214,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         };
     }
     let config_file = env!(optional "CONFIG_FILE");
-    if config_file != "" {
+    if !config_file.is_empty() {
         return Some(read_config_file(config_file));
     }
     let ss_remote_host = env!("SS_REMOTE_HOST");
@@ -290,11 +289,8 @@ fn main() {
         )
         .init();
     let mut args = get_sip003_arg().unwrap_or_else(Args::parse);
-    match args.cmd {
-        Commands::Config { config } => {
-            args = read_config_file(config.to_str().unwrap().to_string());
-        }
-        _ => (),
+    if let Commands::Config { config } = args.cmd {
+        args = read_config_file(config.to_str().unwrap().to_string());
     }
     let parallelism = get_parallelism(&args);
     let running_args = RunningArgs::from(args);
