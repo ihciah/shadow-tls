@@ -28,12 +28,25 @@ struct Args {
     opts: Opts,
 }
 
+macro_rules! default_function {
+    ($name: ident, $type: ident, $val: expr) => {
+        fn $name() -> $type {
+            $val
+        }
+    };
+}
+
+default_function!(default_fastopen, bool, true);
+default_function!(default_disable_nodelay, bool, false);
+
 #[derive(Parser, Debug, Default, Clone, Deserialize)]
 struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
+    #[serde(default = "default_disable_nodelay")]
     #[clap(long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
+    #[serde(default = "default_fastopen")]
     #[clap(long, help = "Enable TCP_FASTOPEN")]
     fastopen: bool,
     #[clap(long, help = "Use v3 protocol")]
