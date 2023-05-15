@@ -36,21 +36,26 @@ macro_rules! default_function {
     };
 }
 
-default_function!(default_fastopen, bool, true);
-default_function!(default_disable_nodelay, bool, false);
+// default_function!(default_true, bool, true);
+default_function!(default_false, bool, false);
+default_function!(default_8080, String, "[::1]:8080".to_string());
+default_function!(default_443, String, "[::]:8080".to_string());
+default_function!(default_wildcard_sni, WildcardSNI, WildcardSNI::Off);
 
 #[derive(Parser, Debug, Default, Clone, Deserialize)]
 struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
-    #[serde(default = "default_disable_nodelay")]
+    #[serde(default = "default_false")]
     #[clap(long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
-    #[serde(default = "default_fastopen")]
+    #[serde(default = "default_false")]
     #[clap(long, help = "Enable TCP_FASTOPEN")]
     fastopen: bool,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Use v3 protocol")]
     v3: bool,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Strict mode(only for v3 protocol)")]
     strict: bool,
 }
@@ -65,6 +70,7 @@ enum Commands {
             default_value = "[::1]:8080",
             help = "Shadow-tls client listen address(like \"[::1]:8080\")"
         )]
+        #[serde(default = "default_8080")]
         listen: String,
         #[clap(
             long = "server",
@@ -94,6 +100,7 @@ enum Commands {
             default_value = "[::]:443",
             help = "Shadow-tls server listen address(like \"[::]:443\")"
         )]
+        #[serde(default = "default_443")]
         listen: String,
         #[clap(
             long = "server",
@@ -113,6 +120,7 @@ enum Commands {
             default_value = "off",
             help = "Use sni:443 as handshake server without predefining mapping(useful for bypass billing system like airplane wifi without modifying server config)"
         )]
+        #[serde(default = "default_wildcard_sni")]
         wildcard_sni: WildcardSNI,
     },
     #[serde(skip)]
