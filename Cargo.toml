@@ -28,6 +28,8 @@ sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-roots = "0.22"
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
 
 [profile.release]
 lto = true

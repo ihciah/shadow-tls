@@ -15,6 +15,7 @@ use monoio::{
 
 use hmac::Mac;
 use rand::Rng;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use prelude::*;
@@ -73,13 +74,16 @@ impl V3Mode {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, clap::ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, clap::ValueEnum, Deserialize)]
 pub enum WildcardSNI {
     /// Disabled
+    #[serde(rename = "off")]
     Off,
     /// For authenticated client only(may be differentiable); in v2 protocol it is eq to all.
+    #[serde(rename = "authed")]
     Authed,
     /// For all request(may cause service abused but not differentiable)
+    #[serde(rename = "all")]
     All,
 }
 

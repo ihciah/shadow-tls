@@ -1,6 +1,6 @@
 #![feature(type_alias_impl_trait)]
 
-use std::{collections::HashMap, process::exit};
+use std::{collections::HashMap, path::PathBuf, process::exit};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
@@ -10,7 +10,9 @@ use shadow_tls::{
     WildcardSNI,
 };
 
-#[derive(Parser, Debug)]
+use serde::Deserialize;
+
+#[derive(Parser, Debug, Deserialize)]
 #[clap(
     author,
     version,
@@ -19,34 +21,56 @@ use shadow_tls::{
 )]
 struct Args {
     #[clap(subcommand)]
+    #[serde(flatten)]
     cmd: Commands,
     #[clap(flatten)]
+    #[serde(flatten)]
     opts: Opts,
 }
 
-#[derive(Parser, Debug, Default, Clone)]
+macro_rules! default_function {
+    ($name: ident, $type: ident, $val: expr) => {
+        fn $name() -> $type {
+            $val
+        }
+    };
+}
+
+// default_function!(default_true, bool, true);
+default_function!(default_false, bool, false);
+default_function!(default_8080, String, "[::1]:8080".to_string());
+default_function!(default_443, String, "[::]:443".to_string());
+default_function!(default_wildcard_sni, WildcardSNI, WildcardSNI::Off);
+
+#[derive(Parser, Debug, Default, Clone, Deserialize)]
 struct Opts {
     #[clap(short, long, help = "Set parallelism manually")]
     threads: Option<u8>,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Disable TCP_NODELAY")]
     disable_nodelay: bool,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Enable TCP_FASTOPEN")]
     fastopen: bool,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Use v3 protocol")]
     v3: bool,
+    #[serde(default = "default_false")]
     #[clap(long, help = "Strict mode(only for v3 protocol)")]
     strict: bool,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Deserialize)]
 enum Commands {
     #[clap(about = "Run client side")]
+    #[serde(rename = "client")]
     Client {
         #[clap(
             long = "listen",
             default_value = "[::1]:8080",
             help = "Shadow-tls client listen address(like \"[::1]:8080\")"
         )]
+        #[serde(default = "default_8080")]
         listen: String,
         #[clap(
             long = "server",
@@ -69,12 +93,14 @@ enum Commands {
         alpn: Option<Vec<String>>,
     },
     #[clap(about = "Run server side")]
+    #[serde(rename = "server")]
     Server {
         #[clap(
             long = "listen",
             default_value = "[::]:443",
             help = "Shadow-tls server listen address(like \"[::]:443\")"
         )]
+        #[serde(default = "default_443")]
         listen: String,
         #[clap(
             long = "server",
@@ -94,7 +120,14 @@ enum Commands {
             default_value = "off",
             help = "Use sni:443 as handshake server without predefining mapping(useful for bypass billing system like airplane wifi without modifying server config)"
         )]
+        #[serde(default = "default_wildcard_sni")]
         wildcard_sni: WildcardSNI,
+    },
+    #[serde(skip)]
+    Config {
+        #[serde(skip)]
+        #[clap(short, long, value_name = "FILE", help = "Path to config file")]
+        config: PathBuf,
     },
 }
 
@@ -104,6 +137,23 @@ fn parse_client_names(addrs: &str) -> anyhow::Result<TlsNames> {
 
 fn parse_server_addrs(arg: &str) -> anyhow::Result<TlsAddrs> {
     TlsAddrs::try_from(arg)
+}
+
+fn read_config_file(filename: String) -> Args {
+    let file = std::fs::File::open(filename);
+    match file {
+        Err(e) => {
+            tracing::error!("cannot open config file: {}", e);
+            exit(-1);
+        }
+        Ok(f) => match serde_json::from_reader(f) {
+            Err(e) => {
+                tracing::error!("cannot read config file: {}", e);
+                exit(-1);
+            }
+            Ok(res) => res,
+        },
+    }
 }
 
 impl From<Args> for RunningArgs {
@@ -149,6 +199,9 @@ impl From<Args> for RunningArgs {
                     v3,
                 }
             }
+            Commands::Config { config: _ } => {
+                unreachable!()
+            }
         }
     }
 }
@@ -173,8 +226,18 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
                 Some(val) => val,
             }
         };
+        (optional $key: expr) => {
+            match std::env::var($key).ok() {
+                None => "".to_string(),
+                Some(val) if val.is_empty() => "".to_string(),
+                Some(val) => val,
+            }
+        };
     }
-
+    let config_file = env!(optional "CONFIG_FILE");
+    if !config_file.is_empty() {
+        return Some(read_config_file(config_file));
+    }
     let ss_remote_host = env!("SS_REMOTE_HOST");
     let ss_remote_port = env!("SS_REMOTE_PORT");
     let ss_local_host = env!("SS_LOCAL_HOST");
@@ -246,7 +309,10 @@ fn main() {
                 .add_directive("rustls=off".parse().unwrap()),
         )
         .init();
-    let args = get_sip003_arg().unwrap_or_else(Args::parse);
+    let mut args = get_sip003_arg().unwrap_or_else(Args::parse);
+    if let Commands::Config { config } = args.cmd {
+        args = read_config_file(config.to_str().unwrap().to_string());
+    }
     let parallelism = get_parallelism(&args);
     let running_args = RunningArgs::from(args);
     tracing::info!("Start {parallelism}-thread {running_args}");

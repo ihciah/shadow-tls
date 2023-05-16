@@ -1,0 +1,13 @@
+{
+	"disable_nodelay": false,
+	"fastopen": true,
+	"v3": true,
+	"strict": true,
+	"client": {
+		"listen": "localhost:8080",
+		"server_addr": "256.256.256.256:443",
+		"tls_names": "captive.apple.com;cloudflare.com",
+		"password": "12345678"
+	}
+}
+
