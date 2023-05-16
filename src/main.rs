@@ -39,7 +39,7 @@ macro_rules! default_function {
 // default_function!(default_true, bool, true);
 default_function!(default_false, bool, false);
 default_function!(default_8080, String, "[::1]:8080".to_string());
-default_function!(default_443, String, "[::]:8080".to_string());
+default_function!(default_443, String, "[::]:443".to_string());
 default_function!(default_wildcard_sni, WildcardSNI, WildcardSNI::Off);
 
 #[derive(Parser, Debug, Default, Clone, Deserialize)]
