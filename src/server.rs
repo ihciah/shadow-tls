@@ -26,16 +26,16 @@ use crate::{
     },
     util::{
         bind_with_pretty_error, copy_bidirectional, copy_until_eof, kdf, mod_tcp_conn, prelude::*,
-        support_tls13, verified_relay, xor_slice, CursorExt, Hmac, V3Mode,
+        resolve, support_tls13, verified_relay, xor_slice, CursorExt, Hmac, V3Mode,
     },
     WildcardSNI,
 };
 
 /// ShadowTlsServer.
 #[derive(Clone)]
-pub struct ShadowTlsServer<LA, TA> {
-    listen_addr: Arc<LA>,
-    target_addr: Arc<TA>,
+pub struct ShadowTlsServer {
+    listen_addr: Arc<String>,
+    target_addr: Arc<String>,
     tls_addr: Arc<TlsAddrs>,
     password: Arc<String>,
     nodelay: bool,
@@ -136,10 +136,10 @@ impl std::fmt::Display for TlsAddrs {
     }
 }
 
-impl<LA, TA> ShadowTlsServer<LA, TA> {
+impl ShadowTlsServer {
     pub fn new(
-        listen_addr: LA,
-        target_addr: TA,
+        listen_addr: String,
+        target_addr: String,
         tls_addr: TlsAddrs,
         password: String,
         nodelay: bool,
@@ -158,13 +158,9 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
     }
 }
 
-impl<LA, TA> ShadowTlsServer<LA, TA> {
+impl ShadowTlsServer {
     /// Serve a raw connection.
-    pub async fn serve(self) -> anyhow::Result<()>
-    where
-        LA: std::net::ToSocketAddrs + 'static,
-        TA: std::net::ToSocketAddrs + 'static,
-    {
+    pub async fn serve(self) -> anyhow::Result<()> {
         let listener = bind_with_pretty_error(self.listen_addr.as_ref(), self.fastopen)?;
         let shared = Rc::new(self);
         loop {
@@ -189,10 +185,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
     }
 
     /// Main relay for V2 protocol.
-    async fn relay_v2(&self, in_stream: TcpStream) -> anyhow::Result<()>
-    where
-        TA: std::net::ToSocketAddrs,
-    {
+    async fn relay_v2(&self, in_stream: TcpStream) -> anyhow::Result<()> {
         // wrap in_stream with hash layer
         let mut in_stream = HashedWriteStream::new(in_stream, self.password.as_bytes())?;
         let mut hmac = in_stream.hmac_handler();
@@ -208,10 +201,13 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
 
         // choose handshake server addr and connect
         let server_name = server_name.and_then(|s| String::from_utf8(s).ok());
-        let addr = self
-            .tls_addr
-            .find(server_name.as_ref().map(AsRef::as_ref), true);
-        let mut out_stream = TcpStream::connect(addr.as_ref()).await?;
+        let addr = resolve(
+            &self
+                .tls_addr
+                .find(server_name.as_ref().map(AsRef::as_ref), true),
+        )
+        .await?;
+        let mut out_stream = TcpStream::connect_addr(addr).await?;
         mod_tcp_conn(&mut out_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
 
@@ -236,7 +232,8 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
                 // connect our data server
                 let _ = out_stream.shutdown().await;
                 drop(out_stream);
-                let mut data_stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+                let mut data_stream =
+                    TcpStream::connect_addr(resolve(&self.target_addr).await?).await?;
                 mod_tcp_conn(&mut data_stream, true, self.nodelay);
                 tracing::debug!("data server connected, start relay");
                 let (mut data_r, mut data_w) = data_stream.split();
@@ -261,20 +258,20 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
     }
 
     /// Main relay for V3 protocol.
-    async fn relay_v3(&self, mut in_stream: TcpStream) -> anyhow::Result<()>
-    where
-        TA: std::net::ToSocketAddrs,
-    {
+    async fn relay_v3(&self, mut in_stream: TcpStream) -> anyhow::Result<()> {
         // stage 1.1: read and validate client hello
         let first_client_frame = read_exact_frame(&mut in_stream).await?;
         let (client_hello_pass, sni) = verified_extract_sni(&first_client_frame, &self.password);
 
         // connect handshake server
         let server_name = sni.and_then(|s| String::from_utf8(s).ok());
-        let addr = self
-            .tls_addr
-            .find(server_name.as_ref().map(AsRef::as_ref), client_hello_pass);
-        let mut handshake_stream = TcpStream::connect(addr.as_ref()).await?;
+        let addr = resolve(
+            &self
+                .tls_addr
+                .find(server_name.as_ref().map(AsRef::as_ref), client_hello_pass),
+        )
+        .await?;
+        let mut handshake_stream = TcpStream::connect_addr(addr).await?;
         mod_tcp_conn(&mut handshake_stream, true, self.nodelay);
         tracing::debug!("handshake server connected: {addr}");
         tracing::trace!("ClientHello frame {first_client_frame:?}");
@@ -359,7 +356,7 @@ impl<LA, TA> ShadowTlsServer<LA, TA> {
 
         // stage 2.2: copy ShadowTLS Client -> Data Server
         // stage 2.3: copy Data Server -> ShadowTLS Client
-        let mut data_stream = TcpStream::connect(self.target_addr.as_ref()).await?;
+        let mut data_stream = TcpStream::connect_addr(resolve(&self.target_addr).await?).await?;
         mod_tcp_conn(&mut data_stream, true, self.nodelay);
         let (res, _) = data_stream.write_all(pure_data).await;
         res?;

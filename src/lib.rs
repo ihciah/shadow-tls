@@ -38,7 +38,7 @@ pub enum RunningArgs {
 
 impl RunningArgs {
     #[inline]
-    pub fn build(self) -> anyhow::Result<Runnable<String, String>> {
+    pub fn build(self) -> anyhow::Result<Runnable> {
         match self {
             RunningArgs::Client {
                 listen_addr,
@@ -89,36 +89,34 @@ impl Display for RunningArgs {
                 tls_names,
                 tls_ext,
                 nodelay,
+                fastopen,
                 v3,
                 ..
             } => {
-                write!(f, "Client with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server names: {tls_names}\nTLS Extension: {tls_ext}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
+                write!(f, "Client with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server names: {tls_names}\nTLS Extension: {tls_ext}\nTCP_NODELAY: {nodelay}\nTCP_FASTOPEN:{fastopen}\nV3 Protocol: {v3}")
             }
             Self::Server {
                 listen_addr,
                 target_addr,
                 tls_addr,
                 nodelay,
+                fastopen,
                 v3,
                 ..
             } => {
-                write!(f, "Server with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server address: {tls_addr}\nTCP_NODELAY: {nodelay}\nV3 Protocol: {v3}")
+                write!(f, "Server with:\nListen address: {listen_addr}\nTarget address: {target_addr}\nTLS server address: {tls_addr}\nTCP_NODELAY: {nodelay}\nTCP_FASTOPEN:{fastopen}\nV3 Protocol: {v3}")
             }
         }
     }
 }
 
 #[derive(Clone)]
-pub enum Runnable<A, B> {
-    Client(ShadowTlsClient<A, B>),
-    Server(ShadowTlsServer<A, B>),
+pub enum Runnable {
+    Client(ShadowTlsClient),
+    Server(ShadowTlsServer),
 }
 
-impl<A, B> Runnable<A, B>
-where
-    A: std::net::ToSocketAddrs + 'static,
-    B: std::net::ToSocketAddrs + 'static,
-{
+impl Runnable {
     async fn serve(self) -> anyhow::Result<()> {
         match self {
             Runnable::Client(c) => c.serve().await,
@@ -126,16 +124,19 @@ where
         }
     }
 
-    pub fn start(&self, parallelism: usize) -> Vec<JoinHandle<anyhow::Result<()>>>
-    where
-        A: Clone + Send + Sync,
-        B: Clone + Send + Sync,
-    {
+    pub fn start(&self, parallelism: usize) -> Vec<JoinHandle<anyhow::Result<()>>> {
+        // 8 threads are enough for resolving domains
+        const MAX_BLOCKING_THREADS: usize = 8;
+
         let mut threads = Vec::new();
+        let shared_pool =
+            monoio::blocking::DefaultThreadPool::new(MAX_BLOCKING_THREADS.min(2 * parallelism));
         for _ in 0..parallelism {
             let runnable_clone = self.clone();
+            let shared_pool = Box::new(shared_pool.clone());
             let t = std::thread::spawn(move || {
                 let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+                .attach_thread_pool(shared_pool)
                 .enable_timer()
                 .build()
                 .expect("unable to build monoio runtime(please refer to: https://github.com/ihciah/shadow-tls/wiki/How-to-Run#common-issues)");

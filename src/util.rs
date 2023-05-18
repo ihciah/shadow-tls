@@ -585,3 +585,21 @@ impl<T: AsyncReadRent> BufferFrameDecoder<T> {
         self.read_pos = 0;
     }
 }
+
+pub(crate) async fn resolve(addr: &str) -> std::io::Result<std::net::SocketAddr> {
+    // Try parse as SocketAddr
+    if let Ok(sockaddr) = addr.parse() {
+        return Ok(sockaddr);
+    }
+    // Spawn blocking
+    let addr_clone = addr.to_string();
+    let mut addr_iter = monoio::spawn_blocking(move || addr_clone.to_socket_addrs())
+        .await
+        .unwrap()?;
+    addr_iter.next().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("unable to resolve addr: {}", addr),
+        )
+    })
+}

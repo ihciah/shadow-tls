@@ -19,8 +19,8 @@ use serde::{de::Visitor, Deserialize};
 use crate::{
     helper_v2::{copy_with_application_data, copy_without_application_data, HashedReadStream},
     util::{
-        bind_with_pretty_error, kdf, mod_tcp_conn, prelude::*, support_tls13, verified_relay,
-        xor_slice, Hmac, V3Mode,
+        bind_with_pretty_error, kdf, mod_tcp_conn, prelude::*, resolve, support_tls13,
+        verified_relay, xor_slice, Hmac, V3Mode,
     },
 };
 
@@ -28,9 +28,9 @@ const FAKE_REQUEST_LENGTH_RANGE: (usize, usize) = (16, 64);
 
 /// ShadowTlsClient.
 #[derive(Clone)]
-pub struct ShadowTlsClient<LA, TA> {
-    listen_addr: Arc<LA>,
-    target_addr: Arc<TA>,
+pub struct ShadowTlsClient {
+    listen_addr: Arc<String>,
+    target_addr: Arc<String>,
     tls_connector: TlsConnector,
     tls_names: Arc<TlsNames>,
     password: Arc<String>,
@@ -145,12 +145,12 @@ impl std::fmt::Display for TlsExtConfig {
     }
 }
 
-impl<LA, TA> ShadowTlsClient<LA, TA> {
+impl ShadowTlsClient {
     /// Create new ShadowTlsClient.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        listen_addr: LA,
-        target_addr: TA,
+        listen_addr: String,
+        target_addr: String,
         tls_names: TlsNames,
         tls_ext_config: TlsExtConfig,
         password: String,
@@ -192,11 +192,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
     }
 
     /// Serve a raw connection.
-    pub async fn serve(self) -> anyhow::Result<()>
-    where
-        LA: std::net::ToSocketAddrs + 'static,
-        TA: std::net::ToSocketAddrs + 'static,
-    {
+    pub async fn serve(self) -> anyhow::Result<()> {
         let listener = bind_with_pretty_error(self.listen_addr.as_ref(), self.fastopen)?;
         let shared = Rc::new(self);
         loop {
@@ -221,10 +217,7 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
     }
 
     /// Main relay for V2 protocol.
-    async fn relay_v2(&self, mut in_stream: TcpStream) -> anyhow::Result<()>
-    where
-        TA: std::net::ToSocketAddrs,
-    {
+    async fn relay_v2(&self, mut in_stream: TcpStream) -> anyhow::Result<()> {
         let (mut out_stream, hash, session) = self.connect_v2().await?;
         let mut hash_8b = [0; 8];
         unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), hash_8b.as_mut_ptr(), 8) };
@@ -240,15 +233,8 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
     }
 
     /// Main relay for V3 protocol.
-    async fn relay_v3(&self, in_stream: TcpStream) -> anyhow::Result<()>
-    where
-        TA: std::net::ToSocketAddrs,
-    {
-        let addr = self
-            .target_addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "empty address"))?;
+    async fn relay_v3(&self, in_stream: TcpStream) -> anyhow::Result<()> {
+        let addr = resolve(&self.target_addr).await?;
         let mut stream = TcpStream::connect_addr_with_config(
             addr,
             &TcpConnectOpts::default().tcp_fast_open(self.fastopen),
@@ -314,15 +300,8 @@ impl<LA, TA> ShadowTlsClient<LA, TA> {
         TcpStream,
         [u8; 20],
         rustls_fork_shadow_tls::ClientConnection,
-    )>
-    where
-        TA: std::net::ToSocketAddrs,
-    {
-        let addr = self
-            .target_addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "empty address"))?;
+    )> {
+        let addr = resolve(&self.target_addr).await?;
         let mut stream = TcpStream::connect_addr_with_config(
             addr,
             &TcpConnectOpts::default().tcp_fast_open(self.fastopen),
