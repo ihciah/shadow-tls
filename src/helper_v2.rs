@@ -19,6 +19,7 @@ use monoio::{
         as_fd::{AsReadFd, AsWriteFd},
         AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt,
     },
+    BufResult,
 };
 
 use crate::util::prelude::*;
@@ -97,10 +98,6 @@ impl<S> HashedWriteStream<S> {
         })
     }
 
-    pub(crate) fn into_inner(self) -> S {
-        self.raw
-    }
-
     pub(crate) fn hash(&self) -> [u8; 20] {
         self.hmac
             .borrow()
@@ -145,127 +142,103 @@ impl<S> HashedStream for HashedWriteStream<S> {
 }
 
 impl<S: AsyncReadRent> AsyncReadRent for HashedReadStream<S> {
-    type ReadFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoBufMut + 'a, S: 'a;
-    type ReadvFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoVecBufMut + 'a, S: 'a;
-
-    fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> Self::ReadFuture<'_, T> {
-        async move {
-            let ptr = buf.write_ptr();
-            let (result, buf) = self.raw.read(buf).await;
-            if let Ok(n) = result {
-                // Safety: we can make sure the ptr and n are valid.
-                self.hmac
-                    .update(unsafe { std::slice::from_raw_parts(ptr, n) });
-            }
-            (result, buf)
+    async fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> BufResult<usize, T> {
+        let ptr = buf.write_ptr();
+        let (result, buf) = self.raw.read(buf).await;
+        if let Ok(n) = result {
+            // Safety: we can make sure the ptr and n are valid.
+            self.hmac
+                .update(unsafe { std::slice::from_raw_parts(ptr, n) });
         }
+        (result, buf)
     }
 
-    fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> Self::ReadvFuture<'_, T> {
-        async move {
-            let slice = match IoVecWrapperMut::new(buf) {
-                Ok(slice) => slice,
-                Err(buf) => return (Ok(0), buf),
-            };
+    async fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> BufResult<usize, T> {
+        let slice = match IoVecWrapperMut::new(buf) {
+            Ok(slice) => slice,
+            Err(buf) => return (Ok(0), buf),
+        };
 
-            let (result, slice) = self.read(slice).await;
-            buf = slice.into_inner();
-            if let Ok(n) = result {
-                unsafe { buf.set_init(n) };
-            }
-            (result, buf)
+        let (result, slice) = self.read(slice).await;
+        buf = slice.into_inner();
+        if let Ok(n) = result {
+            unsafe { buf.set_init(n) };
         }
+        (result, buf)
     }
 }
 
 impl<S: AsyncWriteRent> AsyncWriteRent for HashedReadStream<S> {
-    type WriteFuture<'a, T> = S::WriteFuture<'a, T> where
-    T: monoio::buf::IoBuf + 'a, Self: 'a;
-
-    type WritevFuture<'a, T>= S::WritevFuture<'a, T> where
-    T: monoio::buf::IoVecBuf + 'a, Self: 'a;
-
-    type FlushFuture<'a> = S::FlushFuture<'a> where Self: 'a;
-
-    type ShutdownFuture<'a> = S::ShutdownFuture<'a> where Self: 'a;
-
-    fn write<T: monoio::buf::IoBuf>(&mut self, buf: T) -> Self::WriteFuture<'_, T> {
+    fn write<T: monoio::buf::IoBuf>(
+        &mut self,
+        buf: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.write(buf)
     }
 
-    fn writev<T: monoio::buf::IoVecBuf>(&mut self, buf_vec: T) -> Self::WritevFuture<'_, T> {
+    fn writev<T: monoio::buf::IoVecBuf>(
+        &mut self,
+        buf_vec: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.writev(buf_vec)
     }
 
-    fn flush(&mut self) -> Self::FlushFuture<'_> {
+    fn flush(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.flush()
     }
 
-    fn shutdown(&mut self) -> Self::ShutdownFuture<'_> {
+    fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.shutdown()
     }
 }
 
 impl<S: AsyncReadRent> AsyncReadRent for HashedWriteStream<S> {
-    type ReadFuture<'a, T> = <S as AsyncReadRent>::ReadFuture<'a, T> where
-        T: monoio::buf::IoBufMut + 'a, Self: 'a;
-    type ReadvFuture<'a, T> = <S as AsyncReadRent>::ReadvFuture<'a, T> where
-        T: monoio::buf::IoVecBufMut + 'a, Self: 'a;
-
-    fn read<T: monoio::buf::IoBufMut>(&mut self, buf: T) -> Self::ReadFuture<'_, T> {
+    #[inline]
+    fn read<T: monoio::buf::IoBufMut>(
+        &mut self,
+        buf: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.read(buf)
     }
 
-    fn readv<T: monoio::buf::IoVecBufMut>(&mut self, buf: T) -> Self::ReadvFuture<'_, T> {
+    #[inline]
+    fn readv<T: monoio::buf::IoVecBufMut>(
+        &mut self,
+        buf: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.readv(buf)
     }
 }
 
 impl<S: AsyncWriteRent> AsyncWriteRent for HashedWriteStream<S> {
-    type WriteFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> +'a where
-        T: monoio::buf::IoBuf + 'a, S: 'a;
-
-    type WritevFuture<'a, T> = impl std::future::Future<Output = monoio::BufResult<usize, T>> +'a where
-        T: monoio::buf::IoVecBuf + 'a, S: 'a;
-
-    type FlushFuture<'a> = S::FlushFuture<'a> where Self: 'a;
-
-    type ShutdownFuture<'a> = S::ShutdownFuture<'a> where Self: 'a;
-
-    fn write<T: monoio::buf::IoBuf>(&mut self, buf: T) -> Self::WriteFuture<'_, T> {
-        async move {
-            let ptr = buf.read_ptr();
-            let (result, buf) = self.raw.write(buf).await;
-            if let Ok(n) = result {
-                let mut eh = self.hmac.borrow_mut();
-                if eh.0 {
-                    // Safety: we can make sure the ptr and n are valid.
-                    eh.1.update(unsafe { std::slice::from_raw_parts(ptr, n) });
-                }
+    async fn write<T: monoio::buf::IoBuf>(&mut self, buf: T) -> BufResult<usize, T> {
+        let ptr = buf.read_ptr();
+        let (result, buf) = self.raw.write(buf).await;
+        if let Ok(n) = result {
+            let mut eh = self.hmac.borrow_mut();
+            if eh.0 {
+                // Safety: we can make sure the ptr and n are valid.
+                eh.1.update(unsafe { std::slice::from_raw_parts(ptr, n) });
             }
-            (result, buf)
         }
+        (result, buf)
     }
 
-    fn writev<T: monoio::buf::IoVecBuf>(&mut self, buf: T) -> Self::WritevFuture<'_, T> {
-        async move {
-            let slice = match IoVecWrapper::new(buf) {
-                Ok(slice) => slice,
-                Err(buf) => return (Ok(0), buf),
-            };
+    async fn writev<T: monoio::buf::IoVecBuf>(&mut self, buf: T) -> BufResult<usize, T> {
+        let slice = match IoVecWrapper::new(buf) {
+            Ok(slice) => slice,
+            Err(buf) => return (Ok(0), buf),
+        };
 
-            let (result, slice) = self.write(slice).await;
-            (result, slice.into_inner())
-        }
+        let (result, slice) = self.write(slice).await;
+        (result, slice.into_inner())
     }
 
-    fn flush(&mut self) -> Self::FlushFuture<'_> {
+    fn flush(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.flush()
     }
 
-    fn shutdown(&mut self) -> Self::ShutdownFuture<'_> {
+    fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.shutdown()
     }
 }
@@ -303,12 +276,10 @@ where
         + std::ops::Deref<Target = rustls_fork_shadow_tls::ConnectionCommon<SD>>
         + 'static,
 {
-    type ReadFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoBufMut + 'a, S: 'a;
-    type ReadvFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoVecBufMut + 'a, S: 'a;
-
-    fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> Self::ReadFuture<'_, T> {
+    fn read<T: monoio::buf::IoBufMut>(
+        &mut self,
+        mut buf: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         const HEADER_BUF_SIZE: usize = 5;
 
         async move {
@@ -379,20 +350,18 @@ where
         }
     }
 
-    fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> Self::ReadvFuture<'_, T> {
-        async move {
-            let slice = match IoVecWrapperMut::new(buf) {
-                Ok(slice) => slice,
-                Err(buf) => return (Ok(0), buf),
-            };
+    async fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> BufResult<usize, T> {
+        let slice = match IoVecWrapperMut::new(buf) {
+            Ok(slice) => slice,
+            Err(buf) => return (Ok(0), buf),
+        };
 
-            let (result, slice) = self.read(slice).await;
-            buf = slice.into_inner();
-            if let Ok(n) = result {
-                unsafe { buf.set_init(n) };
-            }
-            (result, buf)
+        let (result, slice) = self.read(slice).await;
+        buf = slice.into_inner();
+        if let Ok(n) = result {
+            unsafe { buf.set_init(n) };
         }
+        (result, buf)
     }
 }
 
@@ -559,7 +528,7 @@ where
     loop {
         let (read_res, buf_read) = reader.read(buf).await;
         match read_res {
-            Ok(n) if n == 0 => {
+            Ok(0) => {
                 // read closed
                 break;
             }
@@ -619,7 +588,7 @@ where
     'r: loop {
         let (read_res, buf_read) = reader.read(buf).await;
         match read_res {
-            Ok(n) if n == 0 => {
+            Ok(0) => {
                 // read closed
                 break;
             }

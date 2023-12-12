@@ -196,7 +196,7 @@ impl ShadowTlsServer {
             true => (Vec::new(), None),
             false => extract_sni_v2(&mut in_stream).await?,
         };
-        let mut prefixed_io = PrefixedReadIo::new(&mut in_stream, std::io::Cursor::new(prefix));
+        let prefixed_io = PrefixedReadIo::new(&mut in_stream, std::io::Cursor::new(prefix));
         tracing::debug!("server name extracted from SNI extention: {server_name:?}");
 
         // choose handshake server addr and connect
@@ -212,8 +212,8 @@ impl ShadowTlsServer {
         tracing::debug!("handshake server connected: {addr}");
 
         // copy stage 1
-        let (mut out_r, mut out_w) = out_stream.split();
-        let (mut in_r, mut in_w) = prefixed_io.split();
+        let (mut out_r, mut out_w) = out_stream.into_split();
+        let (mut in_r, mut in_w) = prefixed_io.into_split();
         let (switch, cp) = FirstRetGroup::new(
             copy_until_handshake_finished(&mut in_r, &mut out_w, &hmac),
             Box::pin(copy_until_eof(&mut out_r, &mut in_w)),
@@ -226,17 +226,17 @@ impl ShadowTlsServer {
         match switch {
             SwitchResult::Switch(data_left) => {
                 drop(cp);
-                let mut in_stream = in_stream.into_inner();
-                let (mut in_r, mut in_w) = in_stream.split();
+                let in_stream = unsafe { in_r.reunite(in_w).unwrap_unchecked() };
+                let in_stream = in_stream.into_inner();
+                let (mut in_r, mut in_w) = in_stream.into_split();
 
                 // connect our data server
-                let _ = out_stream.shutdown().await;
-                drop(out_stream);
+                let _ = out_r.reunite(out_w).unwrap().shutdown().await;
                 let mut data_stream =
                     TcpStream::connect_addr(resolve(&self.target_addr).await?).await?;
                 mod_tcp_conn(&mut data_stream, true, self.nodelay);
                 tracing::debug!("data server connected, start relay");
-                let (mut data_r, mut data_w) = data_stream.split();
+                let (mut data_r, mut data_w) = data_stream.into_split();
                 let (result, _) = data_w.write(data_left).await;
                 result?;
                 ErrGroup::new(
@@ -280,7 +280,7 @@ impl ShadowTlsServer {
         if !client_hello_pass {
             // if client verify failed, bidirectional copy and return
             tracing::warn!("ClientHello verify failed, will work as a SNI proxy");
-            copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
+            copy_bidirectional(in_stream, handshake_stream).await;
             return Ok(());
         }
         tracing::debug!("ClientHello verify success");
@@ -294,7 +294,7 @@ impl ShadowTlsServer {
             None => {
                 // we cannot extract server random, bidirectional copy and return
                 tracing::warn!("ServerRandom extract failed, will copy bidirectional");
-                copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
+                copy_bidirectional(in_stream, handshake_stream).await;
                 return Ok(());
             }
         };
@@ -305,7 +305,7 @@ impl ShadowTlsServer {
             tracing::error!(
                 "V3 strict enabled and TLS 1.3 is not supported, will copy bidirectional"
             );
-            copy_bidirectional(&mut in_stream, &mut handshake_stream).await;
+            copy_bidirectional(in_stream, handshake_stream).await;
             return Ok(());
         }
 
@@ -316,9 +316,9 @@ impl ShadowTlsServer {
 
         // stage 1.3.2: copy ShadowTLS Client -> Handshake Server until hamc matches
         // stage 1.3.3: copy and modify Handshake Server -> ShadowTLS Client until 1.3.2 stops
+        let (mut c_read, mut c_write) = in_stream.into_split();
         let pure_data = {
-            let (mut c_read, mut c_write) = in_stream.split();
-            let (mut h_read, mut h_write) = handshake_stream.split();
+            let (mut h_read, mut h_write) = handshake_stream.into_split();
             let (mut sender, mut recevier) = local_sync::oneshot::channel::<()>();
             let key = kdf(&self.password, &server_random);
             let (maybe_pure, _) = monoio::join!(
@@ -351,7 +351,6 @@ impl ShadowTlsServer {
         tracing::debug!("handshake relay finished");
 
         // early drop useless resources
-        drop(handshake_stream);
         drop(first_server_frame);
 
         // stage 2.2: copy ShadowTLS Client -> Data Server
@@ -362,7 +361,7 @@ impl ShadowTlsServer {
         res?;
         verified_relay(
             data_stream,
-            in_stream,
+            unsafe { c_read.reunite(c_write).unwrap_unchecked() },
             hmac_sr_s,
             hmac_sr_c,
             None,
@@ -843,7 +842,7 @@ async fn copy_by_frame_with_modification(
 ) -> std::io::Result<()> {
     let mut g_buffer = Vec::new();
     let stop = stop.closed();
-    monoio::pin!(stop);
+    let mut stop = std::pin::pin!(stop);
 
     loop {
         monoio::select! {

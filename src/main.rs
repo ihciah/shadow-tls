@@ -220,7 +220,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
             match std::env::var($key).ok() {
                 None => return None,
                 Some(val) if val.is_empty() => {
-                    $fail_fn();
+                    $fail_fn;
                     return None;
                 }
                 Some(val) => val,
@@ -242,7 +242,8 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
     let ss_remote_port = env!("SS_REMOTE_PORT");
     let ss_local_host = env!("SS_LOCAL_HOST");
     let ss_local_port = env!("SS_LOCAL_PORT");
-    let ss_plugin_options = env!("SS_PLUGIN_OPTIONS", || {
+    #[allow(unreachable_code)]
+    let ss_plugin_options = env!("SS_PLUGIN_OPTIONS", {
         tracing::error!("need SS_PLUGIN_OPTIONS when as SIP003 plugin");
         exit(-1);
     });

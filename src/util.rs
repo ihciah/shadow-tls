@@ -114,9 +114,9 @@ where
     Ok(())
 }
 
-pub(crate) async fn copy_bidirectional(l: &mut TcpStream, r: &mut TcpStream) {
-    let (lr, lw) = l.split();
-    let (rr, rw) = r.split();
+pub(crate) async fn copy_bidirectional(l: TcpStream, r: TcpStream) {
+    let (lr, lw) = l.into_split();
+    let (rr, rw) = r.into_split();
     let _ = monoio::join!(copy_until_eof(lr, rw), copy_until_eof(rr, lw));
 }
 
@@ -182,16 +182,16 @@ pub(crate) fn kdf(password: &str, server_random: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) async fn verified_relay(
-    mut raw: TcpStream,
-    mut tls: TcpStream,
+    raw: TcpStream,
+    tls: TcpStream,
     mut hmac_add: Hmac,
     mut hmac_verify: Hmac,
     mut hmac_ignore: Option<Hmac>,
     alert_enabled: bool,
 ) {
     tracing::debug!("verified relay started");
-    let (mut tls_read, mut tls_write) = tls.split();
-    let (mut raw_read, mut raw_write) = raw.split();
+    let (mut tls_read, mut tls_write) = tls.into_split();
+    let (mut raw_read, mut raw_write) = raw.into_split();
     let (mut notfied, mut notifier) = local_sync::oneshot::channel::<()>();
     let _ = monoio::join!(
         async {
@@ -323,7 +323,7 @@ async fn copy_add_appdata(
     buffer.extend_from_slice(&DEFAULT_DATA);
 
     let alert_notified = alert_notified.closed();
-    monoio::pin!(alert_notified);
+    let mut alert_notified = std::pin::pin!(alert_notified);
 
     loop {
         monoio::select! {

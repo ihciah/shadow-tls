@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     ptr::{copy, copy_nonoverlapping},
     rc::Rc,
     sync::Arc,
@@ -10,6 +11,7 @@ use monoio::{
     buf::IoBufMut,
     io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt, Splitable},
     net::{TcpConnectOpts, TcpStream},
+    BufResult,
 };
 use monoio_rustls_fork_shadow_tls::TlsConnector;
 use rand::{prelude::Distribution, seq::SliceRandom, Rng};
@@ -159,11 +161,11 @@ impl ShadowTlsClient {
         v3: V3Mode,
     ) -> anyhow::Result<Self> {
         let mut root_store = RootCertStore::empty();
-        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
             OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
+                ta.subject.as_ref(),
+                ta.subject_public_key_info.as_ref(),
+                ta.name_constraints.as_ref().map(|n| n.as_ref()),
             )
         }));
         // TLS 1.2 and TLS 1.3 is enabled.
@@ -217,12 +219,12 @@ impl ShadowTlsClient {
     }
 
     /// Main relay for V2 protocol.
-    async fn relay_v2(&self, mut in_stream: TcpStream) -> anyhow::Result<()> {
-        let (mut out_stream, hash, session) = self.connect_v2().await?;
+    async fn relay_v2(&self, in_stream: TcpStream) -> anyhow::Result<()> {
+        let (out_stream, hash, session) = self.connect_v2().await?;
         let mut hash_8b = [0; 8];
         unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), hash_8b.as_mut_ptr(), 8) };
-        let (out_r, mut out_w) = out_stream.split();
-        let (mut in_r, mut in_w) = in_stream.split();
+        let (out_r, mut out_w) = out_stream.into_split();
+        let (mut in_r, mut in_w) = in_stream.into_split();
         let mut session_filtered_out_r = crate::helper_v2::SessionFilterStream::new(session, out_r);
         let (a, b) = monoio::join!(
             copy_without_application_data(&mut session_filtered_out_r, &mut in_w),
@@ -469,78 +471,72 @@ impl<S: AsyncReadRent> StreamWrapper<S> {
 }
 
 impl<S: AsyncWriteRent> AsyncWriteRent for StreamWrapper<S> {
-    type WriteFuture<'a, T> = S::WriteFuture<'a, T> where
-    T: monoio::buf::IoBuf + 'a, Self: 'a;
-    type WritevFuture<'a, T>= S::WritevFuture<'a, T> where
-    T: monoio::buf::IoVecBuf + 'a, Self: 'a;
-    type FlushFuture<'a> = S::FlushFuture<'a> where Self: 'a;
-    type ShutdownFuture<'a> = S::ShutdownFuture<'a> where Self: 'a;
-
-    fn write<T: monoio::buf::IoBuf>(&mut self, buf: T) -> Self::WriteFuture<'_, T> {
+    #[inline]
+    fn write<T: monoio::buf::IoBuf>(
+        &mut self,
+        buf: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.write(buf)
     }
-    fn writev<T: monoio::buf::IoVecBuf>(&mut self, buf_vec: T) -> Self::WritevFuture<'_, T> {
+    #[inline]
+    fn writev<T: monoio::buf::IoVecBuf>(
+        &mut self,
+        buf_vec: T,
+    ) -> impl Future<Output = BufResult<usize, T>> {
         self.raw.writev(buf_vec)
     }
-    fn flush(&mut self) -> Self::FlushFuture<'_> {
+    #[inline]
+    fn flush(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.flush()
     }
-    fn shutdown(&mut self) -> Self::ShutdownFuture<'_> {
+    #[inline]
+    fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         self.raw.shutdown()
     }
 }
 
 impl<S: AsyncReadRent> AsyncReadRent for StreamWrapper<S> {
-    type ReadFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoBufMut + 'a, S: 'a;
-    type ReadvFuture<'a, B> = impl std::future::Future<Output = monoio::BufResult<usize, B>> +'a where
-        B: monoio::buf::IoVecBufMut + 'a, S: 'a;
-
     // uncancelable
-    fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> Self::ReadFuture<'_, T> {
-        async move {
-            loop {
-                let owned_buf = self.read_buf.as_mut().unwrap();
-                let data_len = owned_buf.len() - self.read_pos;
-                // there is enough data to copy
-                if data_len > 0 {
-                    let to_copy = buf.bytes_total().min(data_len);
-                    unsafe {
-                        copy_nonoverlapping(
-                            owned_buf.as_ptr().add(self.read_pos),
-                            buf.write_ptr(),
-                            to_copy,
-                        );
-                        buf.set_init(to_copy);
-                    };
-                    self.read_pos += to_copy;
-                    return (Ok(to_copy), buf);
-                }
+    async fn read<T: monoio::buf::IoBufMut>(&mut self, mut buf: T) -> BufResult<usize, T> {
+        loop {
+            let owned_buf = self.read_buf.as_mut().unwrap();
+            let data_len = owned_buf.len() - self.read_pos;
+            // there is enough data to copy
+            if data_len > 0 {
+                let to_copy = buf.bytes_total().min(data_len);
+                unsafe {
+                    copy_nonoverlapping(
+                        owned_buf.as_ptr().add(self.read_pos),
+                        buf.write_ptr(),
+                        to_copy,
+                    );
+                    buf.set_init(to_copy);
+                };
+                self.read_pos += to_copy;
+                return (Ok(to_copy), buf);
+            }
 
-                // no data now
-                match self.feed_data().await {
-                    Ok(0) => return (Ok(0), buf),
-                    Ok(_) => continue,
-                    Err(e) => return (Err(e), buf),
-                }
+            // no data now
+            match self.feed_data().await {
+                Ok(0) => return (Ok(0), buf),
+                Ok(_) => continue,
+                Err(e) => return (Err(e), buf),
             }
         }
     }
 
-    fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> Self::ReadvFuture<'_, T> {
-        async move {
-            let slice = match monoio::buf::IoVecWrapperMut::new(buf) {
-                Ok(slice) => slice,
-                Err(buf) => return (Ok(0), buf),
-            };
+    async fn readv<T: monoio::buf::IoVecBufMut>(&mut self, mut buf: T) -> BufResult<usize, T> {
+        let slice = match monoio::buf::IoVecWrapperMut::new(buf) {
+            Ok(slice) => slice,
+            Err(buf) => return (Ok(0), buf),
+        };
 
-            let (result, slice) = self.read(slice).await;
-            buf = slice.into_inner();
-            if let Ok(n) = result {
-                unsafe { buf.set_init(n) };
-            }
-            (result, buf)
+        let (result, slice) = self.read(slice).await;
+        buf = slice.into_inner();
+        if let Ok(n) = result {
+            unsafe { buf.set_init(n) };
         }
+        (result, buf)
     }
 }
 
