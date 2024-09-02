@@ -269,7 +269,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         let tls_addrs = parse_server_addrs(tls_addr)
             .expect("tls param parse failed(like tls=xxx.com:443 or tls=yyy.com:1.2.3.4:443;zzz.com:443;xxx.com)");
         let wildcard_sni =
-            WildcardSNI::from_str(opts.get("tls").map(AsRef::as_ref).unwrap_or_default(), true)
+            WildcardSNI::from_str(opts.get("wildcard-sni").map(AsRef::as_ref).unwrap_or("off"), true)
                 .expect("wildcard_sni format error");
         Args {
             cmd: crate::Commands::Server {
