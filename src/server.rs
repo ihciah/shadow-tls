@@ -371,10 +371,6 @@ impl ShadowTlsServer {
         let mut data_stream = TcpStream::connect_addr(resolve(&self.target_addr).await?).await?;
         mod_tcp_conn(&mut data_stream, true, self.nodelay);
         // 发送 Proxy Protocol v2 头部到目标服务器
-        //let proxy_header = build_proxy_protocol_v2_header(in_stream.peer_addr()?, data_stream.local_addr()?);
-        //data_stream.write_all(proxy_header).await?.0?;  // 处理返回的 Result
-        // 2.3: Send the Proxy Protocol V2 header to the data server
-        // 将 header 转换为字节切片
         let (res, _) = data_stream.write_all(header).await;
         res?; // 检查是否成功发送
 
