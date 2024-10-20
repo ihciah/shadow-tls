@@ -18,6 +18,8 @@ use monoio::{
     net::TcpStream,
 };
 use serde::Deserialize;
+use std::net::SocketAddr;
+use ppp::v2;
 
 use crate::{
     helper_v2::{
@@ -314,6 +316,17 @@ impl ShadowTlsServer {
         let hmac_sr_s = Hmac::new(&self.password, (&server_random, b"S"));
         let mut hmac_sr = Hmac::new(&self.password, (&server_random, &[]));
 
+        let client_address = in_stream.peer_addr()?; // Get the client's IP address
+        let server_address = resolve(&self.target_addr).await?; // Server address to connect to
+
+        let header = v2::Builder::with_addresses(
+            v2::Version::Two | v2::Command::Proxy,
+            v2::Protocol::Stream,
+            (client_address, server_address),
+        )
+        .build()
+        .unwrap();
+
         // stage 1.3.2: copy ShadowTLS Client -> Handshake Server until hamc matches
         // stage 1.3.3: copy and modify Handshake Server -> ShadowTLS Client until 1.3.2 stops
         let (mut c_read, mut c_write) = in_stream.into_split();
@@ -357,6 +370,14 @@ impl ShadowTlsServer {
         // stage 2.3: copy Data Server -> ShadowTLS Client
         let mut data_stream = TcpStream::connect_addr(resolve(&self.target_addr).await?).await?;
         mod_tcp_conn(&mut data_stream, true, self.nodelay);
+        // 发送 Proxy Protocol v2 头部到目标服务器
+        //let proxy_header = build_proxy_protocol_v2_header(in_stream.peer_addr()?, data_stream.local_addr()?);
+        //data_stream.write_all(proxy_header).await?.0?;  // 处理返回的 Result
+        // 2.3: Send the Proxy Protocol V2 header to the data server
+        // 将 header 转换为字节切片
+        let (res, _) = data_stream.write_all(header).await;
+        res?; // 检查是否成功发送
+
         let (res, _) = data_stream.write_all(pure_data).await;
         res?;
         verified_relay(
