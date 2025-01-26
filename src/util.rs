@@ -1,8 +1,5 @@
 use std::{
-    io::{ErrorKind, Read},
-    net::ToSocketAddrs,
-    ptr::copy_nonoverlapping,
-    time::Duration,
+    io::{ErrorKind, Read}, net::ToSocketAddrs, ptr::copy_nonoverlapping, simd::Simd, time::Duration
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -167,9 +164,46 @@ impl Hmac {
 
 #[inline]
 pub(crate) fn xor_slice(data: &mut [u8], key: &[u8]) {
+    xor_slice_simd(data, key);
+}
+
+#[allow(unused)]
+#[inline]
+pub(crate) fn xor_slice_legacy(data: &mut [u8], key: &[u8]) {
     data.iter_mut()
         .zip(key.iter().cycle())
         .for_each(|(d, k)| *d ^= k);
+}
+
+#[inline]
+pub(crate) fn xor_slice_simd(data: &mut [u8], key: &[u8]) {
+    let key_len = key.len();
+    assert!(32 % key_len == 0, "Key length must be a divisor of 32");
+    assert!(key_len > 0, "Key length must be greater than zero");
+    let mut key32 = [0; 32];
+    // fill new_key with key cycled
+    for i in 0..32 / key_len {
+        key32[i * key_len..(i + 1) * key_len].copy_from_slice(key);
+    }
+
+    let key_simd: Simd<u8, 32> = Simd::from_slice(&key32);
+    let mut offset = 0;
+
+    while offset + 32 <= data.len() {
+        let data_simd: Simd<u8, 32> = Simd::from_slice(&data[offset..offset + 32]);
+        let result = data_simd ^ key_simd;
+        result.copy_to_slice(&mut data[offset..offset + 32]);
+
+        offset += 32;
+    }
+
+    // Fallback to scalar for remaining bytes
+    for (d, k) in data[offset..]
+        .iter_mut()
+        .zip(key.iter().cycle())
+    {
+        *d ^= k;
+    }
 }
 
 #[inline]

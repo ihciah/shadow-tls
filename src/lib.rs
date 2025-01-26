@@ -1,4 +1,5 @@
 #![feature(impl_trait_in_assoc_type)]
+#![feature(portable_simd)]
 
 mod client;
 mod helper_v2;
