@@ -1,5 +1,9 @@
 use std::{
-    io::{ErrorKind, Read}, net::ToSocketAddrs, ptr::copy_nonoverlapping, simd::Simd, time::Duration
+    io::{ErrorKind, Read},
+    net::ToSocketAddrs,
+    ptr::copy_nonoverlapping,
+    simd::Simd,
+    time::Duration,
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -164,7 +168,11 @@ impl Hmac {
 
 #[inline]
 pub(crate) fn xor_slice(data: &mut [u8], key: &[u8]) {
-    xor_slice_simd(data, key);
+    if 32 % key.len() == 0 {
+        xor_slice_simd(data, key);
+    } else {
+        xor_slice_legacy(data, key);
+    }
 }
 
 #[allow(unused)]
