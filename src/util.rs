@@ -599,7 +599,7 @@ pub(crate) async fn resolve(addr: &str) -> std::io::Result<std::net::SocketAddr>
     addr_iter.next().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("unable to resolve addr: {}", addr),
+            format!("unable to resolve addr: {addr}"),
         )
     })
 }
