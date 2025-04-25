@@ -26,6 +26,7 @@ use crate::util::prelude::*;
 
 pub(crate) const HMAC_SIZE_V2: usize = 8;
 
+#[allow(unused)]
 pub(crate) trait HashedStream {
     fn hash_stream(&self) -> [u8; 20];
 }
@@ -98,6 +99,7 @@ impl<S> HashedWriteStream<S> {
         })
     }
 
+    #[allow(unused)]
     pub(crate) fn hash(&self) -> [u8; 20] {
         self.hmac
             .borrow()

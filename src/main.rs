@@ -252,7 +252,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
     let opts: HashMap<_, _> = opts.into_iter().collect();
 
     let threads = opts.get("threads").map(|s| s.parse::<u8>().unwrap());
-    let v3 = opts.get("v3").is_some();
+    let v3 = opts.contains_key("v3");
     let passwd = opts
         .get("passwd")
         .expect("need passwd param(like passwd=123456)");
@@ -262,7 +262,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         v3,
         ..Default::default()
     };
-    let args = if opts.get("server").is_some() {
+    let args = if opts.contains_key("server") {
         let tls_addr = opts
             .get("tls")
             .expect("tls param must be specified(like tls=xxx.com:443)");
