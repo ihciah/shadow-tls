@@ -252,7 +252,7 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
     let opts: HashMap<_, _> = opts.into_iter().collect();
 
     let threads = opts.get("threads").map(|s| s.parse::<u8>().unwrap());
-    let v3 = opts.get("v3").is_some();
+    let v3 = opts.contains_key("v3");
     let passwd = opts
         .get("passwd")
         .expect("need passwd param(like passwd=123456)");
@@ -262,15 +262,17 @@ pub(crate) fn get_sip003_arg() -> Option<Args> {
         v3,
         ..Default::default()
     };
-    let args = if opts.get("server").is_some() {
+    let args = if opts.contains_key("server") {
         let tls_addr = opts
             .get("tls")
             .expect("tls param must be specified(like tls=xxx.com:443)");
         let tls_addrs = parse_server_addrs(tls_addr)
             .expect("tls param parse failed(like tls=xxx.com:443 or tls=yyy.com:1.2.3.4:443;zzz.com:443;xxx.com)");
-        let wildcard_sni =
-            WildcardSNI::from_str(opts.get("wildcard-sni").map(AsRef::as_ref).unwrap_or("off"), true)
-                .expect("wildcard_sni format error");
+        let wildcard_sni = WildcardSNI::from_str(
+            opts.get("wildcard-sni").map(AsRef::as_ref).unwrap_or("off"),
+            true,
+        )
+        .expect("wildcard_sni format error");
         Args {
             cmd: crate::Commands::Server {
                 listen: format!("{ss_remote_host}:{ss_remote_port}"),
